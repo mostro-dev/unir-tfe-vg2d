@@ -1,0 +1,27 @@
+# C extensions
+*.so
+
+# Virtual environment
+venv/
+.env/
+.venv
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# celery beat schedule file
+celerybeat-schedule
+
+# dotenv
+.env.local
+.env.*.local
+
+# IDEs and editors
+.vscode/
+
+# macOS
+.DS_Store
+
+# cache
+__pycache__/
