@@ -1,4 +1,6 @@
 # main.py
+from config import GAME_REGION
+from game_agent.llm_interface.chat_controller import process_command_with_llm
 from game_agent.vision.screen_reader import capture_region, save_image
 import time
 from game_agent.controller.keyboard_controller import press, move
@@ -7,27 +9,18 @@ from game_agent.controller.keyboard_controller import press, move
 print("Starting in 3 seconds...")
 time.sleep(3)
 
-# Move down 5 times
-# move('right', steps=1)
-# move('up', steps=5)
-# move('right', steps=2)
+# LLM Command Execution
+# while True:
+#     cmd = input("¿Qué debe hacer el personaje? ('salir' para terminar): ")
+#     if cmd.lower() == "salir":
+#         break
+#     try:
+#         print("Waiting 3 seconds...")
+#         time.sleep(3)
+#         process_command_with_llm(cmd)
+#     except Exception as e:
+#         print(f"Error: {e}")
 
-# press('z')
-
-# Image capture test
-
-# MacOS Screen Config with VisualBoy
-# Comment this if needed or using another config
-y_offset = 55
-x_offset = 64
-window_width = 480
-window_height = 370
-calc_window_width = window_width - (x_offset * 2)
-calc_window_height = window_height - y_offset
-
-print(
-    f"Window size: [Width]: {calc_window_width} [height]: {calc_window_height}")
-region = (x_offset, y_offset, calc_window_width, calc_window_height)
-
-frame = capture_region(region)
-save_image(frame)
+# Image Capture
+# frame = capture_region(GAME_REGION)
+# save_image(frame)
