@@ -1,5 +1,7 @@
 # game_agent/vision/tile_utils.py
 
+import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -34,7 +36,7 @@ def compare_tiles(tile1, tile2, threshold=0.2):
     return diff > threshold
 
 
-def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=150, debug=False):
+def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=180, debug=False):
     """
     Detecta si hay obstáculos en las direcciones cardinales desde el bloque 2x2 del jugador.
 
@@ -60,20 +62,19 @@ def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=150
 
     for direction, positions in directions.items():
         means = []
-        found_obstacle = False
         for row, col in positions:
             if (
                 row < 0 or row >= len(tiles) or
                 col < 0 or col >= len(tiles[0])
             ):
-                found_obstacle = True
                 means.append(float('nan'))  # Marcamos fuera de rango como NaN
                 continue
             tile = tiles[row][col]
             mean_val = np.mean(tile)
             means.append(mean_val)
-            if mean_val < white_threshold:
-                found_obstacle = True
+
+        combined_mean = np.nanmean(means)
+        found_obstacle = combined_mean < white_threshold
 
         obstacles[direction] = found_obstacle
 
@@ -81,40 +82,49 @@ def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=150
             print(f"[DEBUG] Dirección '{direction}':")
             for i, (pos, val) in enumerate(zip(positions, means)):
                 print(f"   Tile {i+1} en {pos} → mean = {val:.2f}")
-            combined_mean = np.nanmean(means)
             print(f"   → Promedio combinado = {combined_mean:.2f}")
             print(f"   → {'Obstáculo' if found_obstacle else 'Libre'}\n")
 
     return obstacles
 
 
-
 def overlay_red_grid(image, tile_height=35, tile_width=32):
     """
-    Dibuja una cuadrícula roja sobre una imagen dada.
+    Dibuja una cuadrícula roja y añade etiquetas de fila y columna en rojo.
 
-    Args:
-        image (np.ndarray): Imagen en escala de grises o RGB.
-        tile_height (int): Altura de cada celda de la cuadrícula.
-        tile_width (int): Ancho de cada celda de la cuadrícula.
+    Parámetros:
+        image: np.ndarray (grayscale o RGB)
+        tile_height: alto del tile
+        tile_width: ancho del tile
 
-    Returns:
-        np.ndarray: Imagen con la cuadrícula roja superpuesta.
+    Retorna:
+        imagen con cuadrícula y etiquetas
     """
-    # Convertir a RGB si la imagen es en escala de grises
+    # Convertir a RGB si es una imagen en escala de grises
     if len(image.shape) == 2:
         image_rgb = np.stack([image]*3, axis=-1).astype(np.uint8)
     else:
         image_rgb = image.copy()
 
-    height, width = image.shape[:2]
+    height, width = image_rgb.shape[:2]
 
-    # Dibujar líneas horizontales
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.4
+    thickness = 1
+    color = (0, 0, 255)  # 🔴 Rojo en formato BGR
+
+    # Dibujar líneas horizontales y etiquetas de fila
     for y in range(0, height, tile_height):
-        image_rgb[y:y+1, :] = [255, 0, 0]  # Línea horizontal roja
+        cv2.line(image_rgb, (0, y), (width, y), color, 1)
+        row_idx = y // tile_height
+        cv2.putText(image_rgb, str(row_idx), (2, y + 12), font,
+                    font_scale, color, thickness, cv2.LINE_AA)
 
-    # Dibujar líneas verticales
+    # Dibujar líneas verticales y etiquetas de columna
     for x in range(0, width, tile_width):
-        image_rgb[:, x:x+1] = [255, 0, 0]  # Línea vertical roja
+        cv2.line(image_rgb, (x, 0), (x, height), color, 1)
+        col_idx = x // tile_width
+        cv2.putText(image_rgb, str(col_idx), (x + 2, 12), font,
+                    font_scale, color, thickness, cv2.LINE_AA)
 
     return image_rgb
