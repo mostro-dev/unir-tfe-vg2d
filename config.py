@@ -8,3 +8,6 @@ calc_window_width = window_width - (x_offset * 2)
 calc_window_height = window_height - y_offset
 
 GAME_REGION = (x_offset, y_offset, calc_window_width, calc_window_height)
+
+TILE_HEIGHT = 35
+TILE_WIDTH = 32

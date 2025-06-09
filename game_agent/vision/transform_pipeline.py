@@ -5,11 +5,14 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+from config import TILE_HEIGHT, TILE_WIDTH
+from game_agent.vision.tile_utils import overlay_red_grid
 
 selem = morphology.rectangle(4, 4)
 selem_2 = morphology.rectangle(8, 8)
-folder = "./game_agent/vision/debug_captures_pipeline"
+folder = "./game_agent/vision/captures_pipeline"
 label = "debug"
+label_grid = "debug_grid"
 
 
 def save_image_pipeline(image, low=0.7, high=0.85, mid=100):
@@ -27,6 +30,15 @@ def save_image_pipeline(image, low=0.7, high=0.85, mid=100):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{label}_{timestamp}.png"
     path = os.path.join(folder, filename)
+
     cv2.imwrite(path, result)
+
+    # Agregar grid y guardar
+    filename_grid = f"{label_grid}_{timestamp}.png"
+    path_grid = os.path.join(folder, filename_grid)
+    result_with_grid = overlay_red_grid(
+        result, tile_height=TILE_HEIGHT, tile_width=TILE_WIDTH)
+    cv2.imwrite(path_grid, result_with_grid)
+
     print(f"[DEBUG] Imagen guardada: {path}")
-    # return result
+    return result
