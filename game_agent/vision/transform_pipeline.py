@@ -36,8 +36,7 @@ def save_image_pipeline(image, low=0.7, high=0.85, mid=100):
     # Agregar grid y guardar
     filename_grid = f"{label_grid}_{timestamp}.png"
     path_grid = os.path.join(folder, filename_grid)
-    result_with_grid = overlay_red_grid(
-        result, tile_height=TILE_HEIGHT, tile_width=TILE_WIDTH)
+    result_with_grid = overlay_red_grid(result)
     cv2.imwrite(path_grid, result_with_grid)
 
     print(f"[DEBUG] Imagen guardada: {path}")
