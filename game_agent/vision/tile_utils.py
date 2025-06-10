@@ -3,6 +3,7 @@
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+from config import TILE_HEIGHT, TILE_WIDTH, WHITE_THRESHOLD
 
 
 def split_into_tiles(image, tile_height, tile_width):
@@ -36,7 +37,7 @@ def compare_tiles(tile1, tile2, threshold=0.2):
     return diff > threshold
 
 
-def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=180, debug=False):
+def get_surrounding_obstacles(tiles, player_top_left=(4, 3), white_threshold=180, debug=True):
     """
     Detecta si hay obstáculos en las direcciones cardinales desde el bloque 2x2 del jugador.
 
@@ -49,13 +50,15 @@ def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=180
     Retorna:
         dict con claves 'up', 'down', 'left', 'right' y valores booleanos (True si hay obstáculo)
     """
-    r, c = player_top_left
+    c, r = player_top_left
 
+# up  4, 2 - 5, 2
+# ok  4, 3 - 5, 4
     directions = {
-        'up':    [(r-1, c), (r-1, c+1)],
-        'down':  [(r+2, c), (r+2, c+1)],
-        'left':  [(r, c-1), (r+1, c-1)],
-        'right': [(r, c+2), (r+1, c+2)],
+        'up':    [(c, r-1), (c+1, r-1)],
+        'down':  [(c, r+2), (c+1, r+2)],
+        'left':  [(c-1, r), (c-1, r+1)],
+        'right': [(c+2, r), (c+2, r+1)],
     }
 
     obstacles = {}
@@ -69,12 +72,12 @@ def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=180
             ):
                 means.append(float('nan'))  # Marcamos fuera de rango como NaN
                 continue
-            tile = tiles[row][col]
+            tile = tiles[col][row]
             mean_val = np.mean(tile)
             means.append(mean_val)
 
         combined_mean = np.nanmean(means)
-        found_obstacle = combined_mean < white_threshold
+        found_obstacle = combined_mean < WHITE_THRESHOLD
 
         obstacles[direction] = found_obstacle
 
@@ -88,7 +91,7 @@ def get_surrounding_obstacles(tiles, player_top_left=(3, 4), white_threshold=180
     return obstacles
 
 
-def overlay_red_grid(image, tile_height=35, tile_width=32):
+def overlay_red_grid(image, tile_height=TILE_HEIGHT, tile_width=TILE_WIDTH):
     """
     Dibuja una cuadrícula roja y añade etiquetas de fila y columna en rojo.
 
