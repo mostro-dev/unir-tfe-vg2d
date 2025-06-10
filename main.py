@@ -1,7 +1,11 @@
 # main.py
+from game_agent.controller.keyboard_controller import move, press
+from game_agent.dqn.environment import GameEnvironment
 from config import GAME_REGION
-from game_agent.llm_interface.chat_controller import process_command_with_llm
 from game_agent.vision.screen_reader import capture_region, save_image
+from game_agent.vision.tile_utils import get_surrounding_obstacles, split_into_tiles
+from game_agent.vision.transform_pipeline import save_image_pipeline
+import numpy as np
 import time
 from game_agent.controller.keyboard_controller import press, move
 
@@ -24,3 +28,105 @@ time.sleep(3)
 # Image Capture
 # frame = capture_region(GAME_REGION)
 # save_image(frame)
+# pipeline_image = save_image_pipeline(frame)
+
+# tiles = split_into_tiles(
+#     pipeline_image, tile_height=TILE_HEIGHT, tile_width=TILE_WIDTH)
+# obstacles = get_surrounding_obstacles(tiles, player_top_left=(3, 4), debug=False)
+
+# print("Obstacles detected:", obstacles)
+
+
+# env = GameEnvironment()
+# state = env.get_state()
+# print("Estado:", state)
+
+# Inicializar entorno
+game_env = GameEnvironment()
+player_top_left = game_env.player_pos
+
+
+def images_different(img1, img2, threshold=0.05):
+    diff = np.abs(img1.astype(np.float32) - img2.astype(np.float32)) / 255.0
+    print(f"[DEBUG] Diferencia de imágenes: {np.mean(diff)}")
+    return np.mean(diff) >= threshold
+
+
+def is_real_obstacle(direction, threshold=0.05, debug=True):
+    before_move = save_image_pipeline(capture_region(GAME_REGION))
+
+    move(direction)
+    time.sleep(1)
+
+    after_move = save_image_pipeline(capture_region(GAME_REGION))
+    if images_different(before_move, after_move, threshold):
+        if debug:
+            print(f"[DEBUG] Se movió exitosamente hacia '{direction}'.")
+        return False
+
+    press('z')
+    time.sleep(1)
+
+    move(direction)
+    time.sleep(1)
+
+    final = save_image_pipeline(capture_region(GAME_REGION))
+    if images_different(after_move, final, threshold):
+        if debug:
+            print(
+                f"[DEBUG] Se movió después de interactuar con '{direction}'.")
+        return False
+
+    if debug:
+        print(f"[DEBUG] Obstáculo real en dirección '{direction}'.")
+    return True
+
+
+# Loop de movimiento tipo serpiente
+moving_right = True
+
+while True:
+    state = game_env.get_state()
+    obstacles = {
+        "up": bool(state[0]),
+        "right": bool(state[1]),
+        "down": bool(state[2]),
+        "left": bool(state[3]),
+    }
+
+    if moving_right:
+        if not obstacles["right"]:
+            print("➡️  Moviendo a la derecha")
+            move("right")
+            time.sleep(1)
+        else:
+            print("🚧 Posible obstáculo a la derecha")
+            if is_real_obstacle("right"):
+                print("🧱 Confirmado: hay pared a la derecha")
+                print("⬇️  Validando si se puede bajar")
+                if not is_real_obstacle("down"):
+                    print("⬇️  Bajando")
+                    move("down")
+                    time.sleep(1)
+                    moving_right = False
+                else:
+                    print("🔚 Fin del camino (no se puede bajar)")
+                    break
+    else:
+        if not obstacles["left"]:
+            print("⬅️  Moviendo a la izquierda")
+            move("left")
+            time.sleep(1)
+        else:
+            print("🚧 Posible obstáculo a la izquierda")
+            if is_real_obstacle("left"):
+                print("🧱 Confirmado: hay pared a la izquierda")
+                print("⬇️  Validando si se puede bajar")
+                if not is_real_obstacle("down"):
+                    print("⬇️  Bajando")
+                    move("down")
+                    time.sleep(1)
+                    moving_right = True
+                else:
+                    print("🔚 Fin del camino (no se puede bajar)")
+                    break
