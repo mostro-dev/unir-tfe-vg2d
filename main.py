@@ -14,6 +14,75 @@ from game_agent.controller.keyboard_controller import press, move
 print("Starting in 3 seconds...")
 time.sleep(3)
 
+
+# Inicializar entorno
+
+game_env = GameEnvironment()
+player_top_left = game_env.player_pos
+
+frame = capture_region(GAME_REGION)
+
+if is_dialog_open_by_template(frame):
+    print("💬 Cuadro de texto detectado. Presionando Z.")
+    press('z')
+    time.sleep(0.5)
+
+
+def images_different(img1, img2, threshold=0.05):
+    diff = np.abs(img1.astype(np.float32) - img2.astype(np.float32)) / 255.0
+    print(f"[DEBUG] Diferencia de imágenes: {np.mean(diff)}")
+    return np.mean(diff) >= threshold
+
+
+# Loop de movimiento tipo serpiente
+moving_right = True
+
+while True:
+    state = game_env.get_state()
+    obstacles = {
+        "up": bool(state[0]),
+        "right": bool(state[1]),
+        "down": bool(state[2]),
+        "left": bool(state[3]),
+    }
+
+    if moving_right:
+        if not obstacles["right"]:
+            print("➡️  Moviendo a la derecha")
+            move("right")
+            time.sleep(1)
+        else:
+            print("🚧 Posible obstáculo a la derecha")
+            if game_env.is_real_obstacle("right"):
+                print("🧱 Confirmado: hay pared a la derecha")
+                print("⬇️  Validando si se puede bajar")
+                if not game_env.is_real_obstacle("down"):
+                    print("⬇️  Bajando")
+                    move("down")
+                    time.sleep(1)
+                    moving_right = False
+                else:
+                    print("🔚 Fin del camino (no se puede bajar)")
+                    break
+    else:
+        if not obstacles["left"]:
+            print("⬅️  Moviendo a la izquierda")
+            move("left")
+            time.sleep(1)
+        else:
+            print("🚧 Posible obstáculo a la izquierda")
+            if game_env.is_real_obstacle("left"):
+                print("🧱 Confirmado: hay pared a la izquierda")
+                print("⬇️  Validando si se puede bajar")
+                if not game_env.is_real_obstacle("down"):
+                    print("⬇️  Bajando")
+                    move("down")
+                    time.sleep(1)
+                    moving_right = True
+                else:
+                    print("🔚 Fin del camino (no se puede bajar)")
+                    break
+
 # LLM Command Execution
 # while True:
 #     cmd = input("¿Qué debe hacer el personaje? ('salir' para terminar): ")
@@ -41,107 +110,3 @@ time.sleep(3)
 # env = GameEnvironment()
 # state = env.get_state()
 # print("Estado:", state)
-
-# Inicializar entorno
-
-game_env = GameEnvironment()
-player_top_left = game_env.player_pos
-
-frame = capture_region(GAME_REGION)
-
-if is_dialog_open_by_template(frame):
-    print("💬 Cuadro de texto detectado. Presionando Z.")
-    press('z')
-    time.sleep(0.5)
-
-def images_different(img1, img2, threshold=0.05):
-    diff = np.abs(img1.astype(np.float32) - img2.astype(np.float32)) / 255.0
-    print(f"[DEBUG] Diferencia de imágenes: {np.mean(diff)}")
-    return np.mean(diff) >= threshold
-
-
-def is_real_obstacle(direction, threshold=0.05, debug=True):
-    before_move = save_image_pipeline(capture_region(GAME_REGION))
-
-    move(direction)
-    time.sleep(1)
-
-    after_move = save_image_pipeline(capture_region(GAME_REGION))
-    if images_different(before_move, after_move, threshold):
-        if debug:
-            print(f"[DEBUG] Se movió exitosamente hacia '{direction}'.")
-        return False
-
-    press('z')
-    time.sleep(1)
-    
-    while is_dialog_open_by_template(capture_region(GAME_REGION)):
-        print("💬 Cuadro de texto detectado. Presionando Z.")
-        press('z')
-        time.sleep(0.5)
-
-    move(direction)
-    time.sleep(1)
-
-    final = save_image_pipeline(capture_region(GAME_REGION))
-    if images_different(after_move, final, threshold):
-        if debug:
-            print(
-                f"[DEBUG] Se movió después de interactuar con '{direction}'.")
-        return False
-
-    if debug:
-        print(f"[DEBUG] Obstáculo real en dirección '{direction}'.")
-    return True
-
-
-
-
-# Loop de movimiento tipo serpiente
-moving_right = True
-
-while True:
-    state = game_env.get_state()
-    obstacles = {
-        "up": bool(state[0]),
-        "right": bool(state[1]),
-        "down": bool(state[2]),
-        "left": bool(state[3]),
-    }
-
-    if moving_right:
-        if not obstacles["right"]:
-            print("➡️  Moviendo a la derecha")
-            move("right")
-            time.sleep(1)
-        else:
-            print("🚧 Posible obstáculo a la derecha")
-            if is_real_obstacle("right"):
-                print("🧱 Confirmado: hay pared a la derecha")
-                print("⬇️  Validando si se puede bajar")
-                if not is_real_obstacle("down"):
-                    print("⬇️  Bajando")
-                    move("down")
-                    time.sleep(1)
-                    moving_right = False
-                else:
-                    print("🔚 Fin del camino (no se puede bajar)")
-                    break
-    else:
-        if not obstacles["left"]:
-            print("⬅️  Moviendo a la izquierda")
-            move("left")
-            time.sleep(1)
-        else:
-            print("🚧 Posible obstáculo a la izquierda")
-            if is_real_obstacle("left"):
-                print("🧱 Confirmado: hay pared a la izquierda")
-                print("⬇️  Validando si se puede bajar")
-                if not is_real_obstacle("down"):
-                    print("⬇️  Bajando")
-                    move("down")
-                    time.sleep(1)
-                    moving_right = True
-                else:
-                    print("🔚 Fin del camino (no se puede bajar)")
-                    break
