@@ -1,3 +1,4 @@
+import cv2
 from config import GAME_REGION, TILE_HEIGHT, TILE_WIDTH
 from game_agent.controller.keyboard_controller import move, press
 from game_agent.vision.screen_reader import capture_region, save_image
@@ -5,6 +6,9 @@ from game_agent.vision.transform_pipeline import save_image_pipeline
 from game_agent.vision.tile_utils import split_into_tiles, get_surrounding_obstacles
 import numpy as np
 import time
+from game_agent.vision.dialog_detector import is_dialog_open_by_template
+from datetime import datetime
+import os
 
 
 class GameEnvironment:
@@ -12,6 +16,94 @@ class GameEnvironment:
         self.tile_height = TILE_HEIGHT
         self.tile_width = TILE_WIDTH
         self.player_pos = (4, 3)  # tile superior izquierdo del jugador
+
+    def images_different(self, img1, img2, threshold=0.05):
+        diff = np.abs(img1.astype(np.float32) -
+                      img2.astype(np.float32)) / 255.0
+        print(f"[DEBUG] Diferencia de imágenes: {np.mean(diff)}")
+        return np.mean(diff) >= threshold
+
+    def save_tile_image(self, tile, label):
+        """
+        Guarda un tile como imagen con una etiqueta dada ('WALL', 'INFO').
+        """
+
+        folder = os.path.join("game_agent", "tiles", label)
+        os.makedirs(folder, exist_ok=True)
+
+        filename = f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+        path = os.path.join(folder, filename)
+
+        cv2.imwrite(path, tile)
+        print(f"[DEBUG] Tile guardado en {path}")
+
+    def extract_tile_in_direction(self, direction):
+        """
+        Devuelve una imagen 2x2 de tiles en la dirección dada desde el jugador,
+        considerando que player_pos = (col, row).
+        """
+        full_image = self.capture_and_process()
+        tiles = split_into_tiles(full_image, self.tile_height, self.tile_width)
+        c, r = self.player_pos
+
+        dir_map = {
+            "up":    [(c, r-2), (c+1, r-2), (c, r-1), (c+1, r-1)],
+            "down":  [(c, r+2), (c+1, r+2), (c, r+3), (c+1, r+3)],
+            "left":  [(c-2, r), (c-2, r+1), (c-1, r), (c-1, r+1)],
+            "right": [(c+2, r), (c+2, r+1), (c+3, r), (c+3, r+1)],
+        }
+
+        positions = dir_map[direction]
+        tile_images = []
+
+        for col, row in positions:
+            if 0 <= row < len(tiles) and 0 <= col < len(tiles[0]):
+                tile_images.append(tiles[row][col])
+            else:
+                tile_images.append(np.zeros_like(tiles[0][0]))  # Padding negro
+
+        top = np.hstack(tile_images[:2])
+        bottom = np.hstack(tile_images[2:])
+        return np.vstack([top, bottom])
+
+
+    def is_real_obstacle(self, direction, threshold=0.05, debug=True):
+        before_move = self.capture_and_process()
+        move(direction)
+        time.sleep(1)
+
+        after_move = self.capture_and_process()
+        if self.images_different(before_move, after_move, threshold):
+            if debug:
+                print(f"[DEBUG] Se movió exitosamente hacia '{direction}'.")
+            return False
+
+        press('z')
+        time.sleep(1)
+        while is_dialog_open_by_template(capture_region(GAME_REGION)):
+            print("💬 Cuadro de texto detectado. Presionando Z.")
+            press('z')
+            time.sleep(0.5)
+
+        move(direction)
+        time.sleep(1)
+
+        final = self.capture_and_process()
+
+        if self.images_different(after_move, final, threshold):
+            if debug:
+                print(
+                    f"[DEBUG] Se movió después de interactuar con '{direction}'.")
+            # Guarda el tile como INFO
+            tile = self.extract_tile_in_direction(direction)
+            self.save_tile_image(tile, label="INFO")
+            return False
+
+        if debug:
+            print(f"[DEBUG] Obstáculo real en dirección '{direction}'.")
+            tile = self.extract_tile_in_direction(direction)
+            self.save_tile_image(tile, label="WALL")
+            return True
 
     def capture_and_process(self):
         frame = capture_region(GAME_REGION)
