@@ -170,9 +170,9 @@ class GameEnvironment:
         action = action_map[action]
         prev_image = self.capture_and_process()
 
-        # Ejecutar acción
         if action in ['up', 'right', 'down', 'left']:
             move(action)
+            self.last_direction = action  # Guardar la última dirección
             time.sleep(1)
         elif action == 'z':
             press('z')
@@ -185,36 +185,49 @@ class GameEnvironment:
 
         if action in ['up', 'right', 'down', 'left']:
             if moved:
-                reward += 1
+                reward += 0.2
             else:
-                # Confirmamos si fue realmente un obstáculo
                 is_wall = self.is_real_obstacle(action)
                 if is_wall:
-                    reward -= 1
+                    reward -= 2.0
+                else:
+                    reward -= 0.5
         elif action == 'z':
-            reward = 0.5 if moved else -0.5
+            frame = capture_region(GAME_REGION)
+            is_dialog = is_dialog_open_by_template(frame)
 
-        # Detectar si entró a un edificio (cambio drástico)
+            if is_dialog and not self.is_text_in_screen:
+                reward += 2.0  # fuerte recompensa por interacción exitosa
+                self.is_text_in_screen = True
+
+                # Guardar el tile con el que interactuó
+                if hasattr(self, 'last_direction'):
+                    tile = self.extract_tile_in_direction(self.last_direction)
+                    self.save_tile_image(tile, label="INFO")
+            elif is_dialog and self.is_text_in_screen:
+                # Seguir cerrando el diálogo
+                press('z')
+                time.sleep(0.5)
+            elif not is_dialog and self.is_text_in_screen:
+                self.is_text_in_screen = False  # terminó el texto
+
         if self.image_changed(prev_image, new_image, threshold=self.BUILDING_THRESHOLD):
             print("🏠 Cambio visual fuerte detectado, probablemente entró a un edificio")
-            reward += 2.0  # Recompensa por explorar
+            reward += 3.0
 
-            # Intentar salir hacia abajo
             for _ in range(10):
                 move("down")
                 time.sleep(1)
                 after_exit = self.capture_and_process()
                 if not self.image_changed(prev_image, after_exit, threshold=self.BUILDING_THRESHOLD):
                     print("🚪 Salió del edificio.")
-
-                    # 🔽 Guardar tile como DOOR (porque ahora sabemos dónde estaba la puerta)
                     door_tile = self.extract_tile_in_direction("up")
                     self.save_tile_image(door_tile, label="DOOR")
-
+                    reward += 0.5
                     break
             else:
                 print("❌ No logró salir del edificio")
-                reward -= 1.0
+                reward -= 10.0
 
         state = self.get_state()
         done = False
