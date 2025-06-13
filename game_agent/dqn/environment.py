@@ -159,13 +159,24 @@ class GameEnvironment:
         return state, reward, done
 
     def step(self, action):
+        action_map = {
+            0: 'up',
+            1: 'right',
+            2: 'down',
+            3: 'left',
+            4: 'z'
+        }
+
+        action = action_map[action]
         prev_image = self.capture_and_process()
 
         # Ejecutar acción
         if action in ['up', 'right', 'down', 'left']:
             move(action)
+            time.sleep(1)
         elif action == 'z':
             press('z')
+            time.sleep(1)
 
         new_image = self.capture_and_process()
         moved = self.image_changed(prev_image, new_image)
