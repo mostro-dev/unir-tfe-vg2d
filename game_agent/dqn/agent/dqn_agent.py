@@ -9,6 +9,8 @@ from tensorflow.keras.optimizers import Adam
 
 
 class DQNAgent:
+    ACTIONS = ['up', 'right', 'down', 'left', 'z']
+
     def __init__(self, state_dim, action_dim):
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -24,14 +26,6 @@ class DQNAgent:
 
         self.model = self.build_model()
 
-        self.action_map = {
-            0: 'up',
-            1: 'right',
-            2: 'down',
-            3: 'left',
-            4: 'z'
-        }
-
     def build_model(self):
         model = Sequential()
         model.add(Dense(24, input_dim=self.state_dim, activation='relu'))
@@ -43,9 +37,9 @@ class DQNAgent:
 
     def select_action(self, state, explore=True):
         if explore and np.random.rand() < self.epsilon:
-            return np.random.randint(self.action_dim)
+            return random.choice(self.ACTIONS)
         q_values = self.model.predict(np.expand_dims(state, axis=0), verbose=0)
-        return np.argmax(q_values[0])
+        return self.ACTIONS[np.argmax(q_values[0])]
 
     def select_action_old(self, state):
         if np.random.rand() <= self.epsilon:

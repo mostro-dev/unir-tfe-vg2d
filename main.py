@@ -1,5 +1,6 @@
 # main.py
-from config import GAME_REGION
+from game_agent.dqn.evaluate_agent import evaluate
+from config import GAME_REGION, TILE_HEIGHT, TILE_WIDTH
 from game_agent.controller.keyboard_controller import move, press
 from game_agent.controller.keyboard_controller import press, move
 from game_agent.dqn.agent.dqn_agent import DQNAgent
@@ -18,11 +19,14 @@ import time
 print("Starting in 3 seconds...")
 time.sleep(3)
 
-# main.py
-if __name__ == "__main__":
-    print("Iniciando entrenamiento del agente DQN...")
-    train()
 
+# if __name__ == "__main__":
+#     print("Iniciando entrenamiento del agente DQN...")
+#     train()
+
+
+if __name__ == "__main__":
+    evaluate(num_steps=50)
 
 # Inicializar entorno
 
