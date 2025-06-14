@@ -1,4 +1,4 @@
-#evaluate_agent.py
+# evaluate_agent.py
 from game_agent.dqn.environment import GameEnvironment
 from game_agent.dqn.agent.dqn_agent import DQNAgent
 from game_agent.dqn.constants import ACTIONS  # Importamos la lista de acciones
@@ -7,7 +7,7 @@ import time
 
 def evaluate(num_steps=50):
     print("[EVAL] Cargando entorno y modelo...")
-    env = GameEnvironment()
+    env = GameEnvironment(False)  # False para no guardar el mapa
     agent = DQNAgent(state_dim=4, action_dim=len(ACTIONS))
     agent.load("dqn_model.keras")  # Asegúrate de que este archivo exista
 

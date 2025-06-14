@@ -1,283 +1,293 @@
+# game_agent/dqn/environment.py
+
+import glob
+import os
+import time
 import cv2
-from config import GAME_REGION, TILE_HEIGHT, TILE_WIDTH
+import numpy as np
+from datetime import datetime
+
+from config import GAME_REGION, TILE_HEIGHT, TILE_WIDTH, TileType
+from game_agent.map.world_map import WorldMap
 from game_agent.controller.keyboard_controller import move, press
-from game_agent.vision.oak_zone_detector import is_oak_zone_triggered
 from game_agent.vision.screen_reader import capture_region, save_image
 from game_agent.vision.transform_pipeline import save_image_pipeline
 from game_agent.vision.tile_utils import split_into_tiles, get_surrounding_obstacles
-import numpy as np
-import time
 from game_agent.vision.dialog_detector import is_dialog_open_by_template
-from datetime import datetime
-import os
+from game_agent.vision.oak_zone_detector import is_oak_zone_triggered
 
 
 class GameEnvironment:
-    BUILDING_THRESHOLD = 85  # Umbral para detectar cambios drásticos al entrar a un edificio
-    # Ruta de las plantillas de OAK
-    OAK_TEMPLATE_PATH = "./game_agent/vision/templates/"
+    BUILDING_THRESHOLD = 85  # umbral para detectar entrada a edificio
+    OAK_STEPS_BACK = 5  # pasos hacia atrás en zona Oak
 
-    def __init__(self):
+    def __init__(self, save_mode: bool = True):
+        # flag que indica si persistimos el world_map en disco
+        self.save_mode = save_mode
+
+        # visión
         self.tile_height = TILE_HEIGHT
         self.tile_width = TILE_WIDTH
-        self.player_pos = (4, 3)  # tile superior izquierdo del jugador
+
+        # mapa y posición lógica del agente
+        self.world_map = WorldMap()
+        self.agent_pos = (0, 0)
+        # inicializamos la posición de arranque como piso
+        self.world_map.update_tile(self.agent_pos, TileType.FLOOR, prob=1.0)
+        self.world_map.mark_visited(self.agent_pos)
+        if self.save_mode:
+            self.world_map.save()
+
+        # estado para diálogo
         self.is_text_in_screen = False
 
-    def is_near_oak_zone(self, threshold=0.9):
-        current_frame = self.capture_and_process()
-        current_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
-
-        for template_path in glob.glob(os.path.join(self.OAK_TEMPLATE_PATH, "oak_template_*.png")):
-            template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-            if template is None:
-                continue
-
-            result = cv2.matchTemplate(
-                current_gray, template, cv2.TM_CCOEFF_NORMED)
-            max_val = np.max(result)
-            if max_val >= threshold:
-                print(
-                    f"[OAK DETECTION] Coincidencia con {os.path.basename(template_path)}: {max_val:.2f}")
-                return True
-
-        return False
-
-    def images_different(self, img1, img2, threshold=0.05, debug=False):
-        diff = np.abs(img1.astype(np.float32) -
-                      img2.astype(np.float32)) / 255.0
-        if debug:
-            print(f"[DEBUG] Diferencia de imágenes: {np.mean(diff)}")
-        return np.mean(diff) >= threshold
-
-    def save_tile_image(self, tile, label):
-        """
-        Guarda un tile como imagen con una etiqueta dada ('WALL', 'INFO').
-        """
-
-        folder = os.path.join("game_agent", "tiles", label)
-        os.makedirs(folder, exist_ok=True)
-
-        filename = f"{label}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
-        path = os.path.join(folder, filename)
-
-        cv2.imwrite(path, tile)
-        print(f"[DEBUG] Tile guardado en {path}")
-
-    def extract_tile_in_direction(self, direction):
-        """
-        Devuelve una imagen 2x2 de tiles en la dirección dada desde el jugador,
-        considerando que player_pos = (col, row).
-        """
-        full_image = self.capture_and_process()
-        tiles = split_into_tiles(full_image, self.tile_height, self.tile_width)
-        c, r = self.player_pos
-
-        dir_map = {
-            "up":    [(c, r-2), (c+1, r-2), (c, r-1), (c+1, r-1)],
-            "down":  [(c, r+2), (c+1, r+2), (c, r+3), (c+1, r+3)],
-            "left":  [(c-2, r), (c-2, r+1), (c-1, r), (c-1, r+1)],
-            "right": [(c+2, r), (c+2, r+1), (c+3, r), (c+3, r+1)],
-        }
-
-        positions = dir_map[direction]
-        tile_images = []
-
-        for col, row in positions:
-            if 0 <= row < len(tiles) and 0 <= col < len(tiles[0]):
-                tile_images.append(tiles[row][col])
-            else:
-                tile_images.append(np.zeros_like(tiles[0][0]))  # Padding negro
-
-        top = np.hstack(tile_images[:2])
-        bottom = np.hstack(tile_images[2:])
-        return np.vstack([top, bottom])
-
-    def is_real_obstacle(self, direction, threshold=0.05, debug=True):
-        before_move = self.capture_and_process()
-        move(direction)
-        time.sleep(1)
-
-        after_move = self.capture_and_process()
-        if self.images_different(before_move, after_move, threshold):
-            if debug:
-                print(f"[DEBUG] Se movió exitosamente hacia '{direction}'.")
-            return False
-
-        press('z')
-        time.sleep(1)
-        while is_dialog_open_by_template(capture_region(GAME_REGION)):
-            print("💬 Cuadro de texto detectado. Presionando Z.")
-            press('z')
-            time.sleep(1)
-
-        move(direction)
-        time.sleep(1)
-
-        final = self.capture_and_process()
-
-        if self.images_different(after_move, final, threshold):
-            if debug:
-                print(
-                    f"[DEBUG] Se movió después de interactuar con '{direction}'.")
-            # Guarda el tile como INFO
-            tile = self.extract_tile_in_direction(direction)
-            self.save_tile_image(tile, label="INFO")
-            return False
-
-        if debug:
-            print(f"[DEBUG] Obstáculo real en dirección '{direction}'.")
-            tile = self.extract_tile_in_direction(direction)
-            self.save_tile_image(tile, label="WALL")
-            return True
+    def _future_coord(self, action: str):
+        """Devuelve la coordenada lógica resultante de aplicar `action`."""
+        x, y = self.agent_pos
+        if action == 'up':
+            y -= 1
+        elif action == 'down':
+            y += 1
+        elif action == 'left':
+            x -= 1
+        elif action == 'right':
+            x += 1
+        return (x, y)
 
     def capture_and_process(self):
+        """Captura pantalla, guarda debug y pipeline, y devuelve la imagen procesada."""
         frame = capture_region(GAME_REGION)
         save_image(frame)
-        pipeline_image = save_image_pipeline(frame)
-        return pipeline_image
+        return save_image_pipeline(frame)
 
-    def get_state(self):
-        processed_image = self.capture_and_process()
-        tiles = split_into_tiles(
-            processed_image, self.tile_height, self.tile_width)
-        obstacles = get_surrounding_obstacles(
-            tiles, player_top_left=self.player_pos)
+    def handle_oak_zone(self, current_image):
+        """
+        Si la zona de Oak está activa, fuerza a bajar 5 tiles y penaliza.
+        """
+        if is_oak_zone_triggered(current_image, debug=False):
+            print("⚠️ Zona Oak detectada: forzando salida ↓↓")
+            for _ in range(self.OAK_STEPS_BACK):
+                move("down")
+                time.sleep(1)
+            return True, -10.0
+        return False, 0.0
 
-        state = np.array([
-            int(obstacles["up"]),
-            int(obstacles["right"]),
-            int(obstacles["down"]),
-            int(obstacles["left"]),
-        ], dtype=np.float32)
-
-        return state
-
-    def image_changed(self, img1, img2, threshold=15, debug=True):
-        """Compara el promedio absoluto de diferencia entre dos imágenes."""
+    def image_changed(self, img1, img2, threshold=15, debug=False):
+        """Compara diferencia media absoluta entre imágenes."""
         if img1.shape != img2.shape:
             return True
         diff = np.abs(img1.astype(np.int16) - img2.astype(np.int16))
         mean_diff = np.mean(diff)
         if debug:
-            print(f"[DEBUG] Diferencia media entre imágenes: {mean_diff}")
+            print(f"[DEBUG] Difum promedio: {mean_diff:.2f}")
         return mean_diff > threshold
 
-        prev_image = self.capture_and_process()
+    def extract_tile_in_direction(self, direction):
+        """Extrae el bloque de 2×2 tiles en `direction` relativas a agent_pos."""
+        full = self.capture_and_process()
+        tiles = split_into_tiles(full, self.tile_height, self.tile_width)
+        cx, cy = self.agent_pos
+        dir_map = {
+            "up":    [(cx, cy-2), (cx+1, cy-2), (cx, cy-1), (cx+1, cy-1)],
+            "down":  [(cx, cy+2), (cx+1, cy+2), (cx, cy+3), (cx+1, cy+3)],
+            "left":  [(cx-2, cy), (cx-2, cy+1), (cx-1, cy), (cx-1, cy+1)],
+            "right": [(cx+2, cy), (cx+2, cy+1), (cx+3, cy), (cx+3, cy+1)],
+        }
+        imgs = []
+        for tx, ty in dir_map[direction]:
+            if 0 <= ty < len(tiles) and 0 <= tx < len(tiles[0]):
+                imgs.append(tiles[ty][tx])
+            else:
+                imgs.append(np.zeros_like(tiles[0][0]))
+        top = np.hstack(imgs[:2])
+        bot = np.hstack(imgs[2:])
+        return np.vstack([top, bot])
 
-        # Ejecutar acción
-        if action in ['up', 'right', 'down', 'left',]:
-            move(action)
-        elif action == 'z':
+    def is_real_obstacle(self, direction, threshold=0.05, debug=True):
+        """
+        Comprueba si tras intentar moverse e interactuar sigue bloqueado:
+        si es pared → devuelve True (guarda WALL),
+        si no → False (guarda INFO).
+        """
+        if debug:
+            print(f"[DEBUG] Comprobando obstáculo en {direction}")
+        before = self.capture_and_process()
+        move(direction)
+        time.sleep(1)
+        after = self.capture_and_process()
+
+        # Si se movió, no era obstáculo
+        if self.image_changed(before, after, threshold):
+            if debug:
+                print(f"[DEBUG] Movió con éxito a {direction}")
+            return False
+
+        # Intentar interactuar
+        press('z')
+        time.sleep(1)
+        while is_dialog_open_by_template(capture_region(GAME_REGION)):
             press('z')
+            time.sleep(0.5)
 
-        new_image = self.capture_and_process()
-        moved = self.image_changed(prev_image, new_image)
+        # Volver a mover
+        move(direction)
+        time.sleep(1)
+        final = self.capture_and_process()
 
-        if action in ['up', 'right', 'down', 'left', ]:
-            reward = +1 if moved else -1
-        elif action == 'z':
-            reward = 0.5 if moved else -0.5
+        # Si ahora sí se movió → INFO
+        if self.image_changed(after, final, threshold):
+            if debug:
+                print(f"[DEBUG] Interactuó y luego movió a {direction}")
+            coord = self._future_coord(direction)
+            self.world_map.update_tile(coord, TileType.INFO, prob=1.0)
+            if self.save_mode:
+                self.world_map.save()
+            return False
 
-        state = self.get_state()
-        done = False  # Podrías definir condiciones de finalización más adelante
+        # Sino → WALL
+        if debug:
+            print(f"[DEBUG] Obstáculo real en {direction}")
+        coord = self._future_coord(direction)
+        self.world_map.update_tile(coord, TileType.WALL, prob=1.0)
+        if self.save_mode:
+            self.world_map.save()
+        return True
 
-        return state, reward, done
-
-    def handle_oak_zone(self, current_image):
+    def get_state(self):
         """
-        Detecta si el jugador está en una zona que activa el evento del Profesor Oak.
-        Si lo está, lo fuerza a moverse hacia abajo y penaliza con una recompensa negativa.
+        Estado = vector [up, right, down, left]
+        según get_surrounding_obstacles sobre la imagen procesada.
         """
-        if is_oak_zone_triggered(current_image, debug=False):
-            print(
-                "⚠️ Zona peligrosa del Profesor Oak detectada. Forzando salida hacia abajo...")
-            for _ in range(5):
-                move("down")
-                time.sleep(1)
-            return True, -10.0  # Indica que fue interceptado y aplica penalización
-        return False, 0.0
+        proc = self.capture_and_process()
+        tiles = split_into_tiles(proc, self.tile_height, self.tile_width)
+        obs = get_surrounding_obstacles(tiles, player_top_left=(4, 3))
+        return np.array([
+            float(obs["up"]), float(obs["right"]),
+            float(obs["down"]), float(obs["left"])
+        ], dtype=np.float32)
 
-    def step(self, action):
-        prev_image = self.capture_and_process()
-
-        # Detectar si estamos en zona de evento del Profesor Oak
-        triggered, oak_penalty = self.handle_oak_zone(prev_image)
+    def step(self, action: str, debug: bool = True):
+        """
+        Ejecuta la acción, calcula recompensa, actualiza posición lógica,
+        y registra el tile en world_map (con penalización por revisitas).
+        """
+        # 1) Oak‐zone
+        prev_img = self.capture_and_process()
+        triggered, oak_penalty = self.handle_oak_zone(prev_img)
         if triggered:
-            state = self.get_state()
-            return state, oak_penalty, False
+            # Si entró en zona Oak, solo penalizamos y devolvemos estado
+            return self.get_state(), oak_penalty, False
 
-        if action in ['up', 'right', 'down', 'left']:
+        # 2) Calculamos futura coordenada lógica
+        next_coord = self._future_coord(action)
+
+        # 3) Ejecutamos la acción física
+        if action in ['up', 'down', 'left', 'right']:
             move(action)
             self.last_direction = action
             time.sleep(1)
-        elif action == 'z':
+        else:  # acción 'z'
             press('z')
             time.sleep(1)
 
-        new_image = self.capture_and_process()
-        moved = self.image_changed(prev_image, new_image, threshold=15)
-        print(f"[DEBUG] Movimiento detectado: {moved}")
+        # 4) Captura tras la acción y comparamos
+        new_img = self.capture_and_process()
+        moved = self.image_changed(prev_img, new_img, threshold=15)
+        reward = 0.0
 
-        reward = 0
-
-        if action in ['up', 'right', 'down', 'left']:
+        # 5) Movimiento: recompensa o castigo, y actualización de visitas
+        if action in ['up', 'down', 'left', 'right']:
             if moved:
-                reward += 0.2
-                print(
-                    f"[DEBUG] Se movió correctamente con {action}. Recompensa: +0.2")
-            else:
-                print(
-                    f"[DEBUG] No se detectó movimiento con {action}. Verificando si es obstáculo real...")
-                is_wall = self.is_real_obstacle(
-                    action, threshold=5, debug=True)
+                # Antes de marcar, leemos cuántas veces visitamos next_coord
+                prev_visits = self.world_map.map.get(
+                    next_coord, {}).get("_visits", 0)
+                if prev_visits > 0:
+                    reward -= 0.1
+                    if debug:
+                        print(
+                            f"[DEBUG] Revisitando {next_coord}. Penalización: -0.1")
+                else:
+                    reward += 0.2
+                    if debug:
+                        print(
+                            f"[DEBUG] Primera visita a {next_coord}. Recompensa: +0.2")
+                    self.world_map.update_tile(
+                        next_coord, TileType.FLOOR, prob=1.0)  # Marcamos como FLOOR
 
-                if is_wall:
+                # Actualizamos posición y marcamos visita
+                self.agent_pos = next_coord
+                self.world_map.mark_visited(self.agent_pos)
+                if self.save_mode:
+                    self.world_map.save()
+
+            else:
+                # No se movió: confirmamos si era pared real o no
+                if self.is_real_obstacle(action):
                     reward -= 1.0
-                    print(
-                        f"[DEBUG] Confirmado obstáculo con {action}. Recompensa: -1.0")
+                    if debug:
+                        print(
+                            f"[DEBUG] Choque contra pared con {action}. Recompensa: -1.0")
                 else:
                     reward -= 0.5
-                    print(
-                        f"[DEBUG] No fue obstáculo, quizá delay o animación. Recompensa: -0.5")
+                    if debug:
+                        print(
+                            f"[DEBUG] Sin movimiento pero no pared. Recompensa: -0.5")
 
-        elif action == 'z':
+        # 6) Interacción con 'z'
+        else:
             frame = capture_region(GAME_REGION)
-            is_dialog = is_dialog_open_by_template(frame)
-
-            if is_dialog and not self.is_text_in_screen:
+            dialog = is_dialog_open_by_template(frame)
+            if dialog and not self.is_text_in_screen:
                 reward += 2.0
                 self.is_text_in_screen = True
-                print("[DEBUG] Interacción exitosa con Z. Recompensa: +2.0")
+                if debug:
+                    print("[DEBUG] Interacción exitosa con Z. Recompensa: +2.0")
+                # Registramos INFO en la casilla con la última dirección
+                coord = self._future_coord(self.last_direction)
+                self.world_map.update_tile(coord, TileType.INFO, prob=1.0)
+                if self.save_mode:
+                    self.world_map.save()
 
-                if hasattr(self, 'last_direction'):
-                    tile = self.extract_tile_in_direction(self.last_direction)
-                    self.save_tile_image(tile, label="INFO")
+                # Mantenemos pulsando Z hasta que el diálogo desaparezca
+                while True:
+                    press('z')
+                    time.sleep(1)
+                    frame = capture_region(GAME_REGION)
+                    if not is_dialog_open_by_template(frame):
+                        if debug:
+                            print("[DEBUG] Diálogo cerrado.")
+                        self.is_text_in_screen = False
+                        break
 
-            elif is_dialog and self.is_text_in_screen:
-                press('z')
-                time.sleep(0.5)
-            elif not is_dialog and self.is_text_in_screen:
+            elif not dialog and self.is_text_in_screen:
+                # Se cerró el diálogo
                 self.is_text_in_screen = False
 
-        if self.image_changed(prev_image, new_image, threshold=self.BUILDING_THRESHOLD):
-            print("🏠 Cambio visual fuerte detectado, probablemente entró a un edificio")
+        # 7) Detección de entrada a edificio
+        if self.image_changed(prev_img, new_img, threshold=self.BUILDING_THRESHOLD):
+            print("🏠 Cambio visual fuerte: prob. entró a edificio")
             reward += 3.0
-
+            # Forzamos la salida
             for _ in range(10):
                 move("down")
                 time.sleep(1)
-                after_exit = self.capture_and_process()
-                if not self.image_changed(prev_image, after_exit, threshold=self.BUILDING_THRESHOLD):
-                    print("🚪 Salió del edificio.")
-                    door_tile = self.extract_tile_in_direction("up")
-                    self.save_tile_image(door_tile, label="DOOR")
+                exit_img = self.capture_and_process()
+                if not self.image_changed(prev_img, exit_img, threshold=self.BUILDING_THRESHOLD):
+                    # La puerta estará justo arriba
+                    door_coord = self._future_coord('up')
+                    self.world_map.update_tile(
+                        door_coord, TileType.DOOR, prob=1.0)
+                    if self.save_mode:
+                        self.world_map.save()
                     reward += 0.5
+                    if debug:
+                        print("[DEBUG] Salió del edificio. Puerta registrada.")
                     break
             else:
-                print("❌ No logró salir del edificio")
                 reward -= 10.0
+                if debug:
+                    print("[DEBUG] No salió del edificio. Penalización: -10.0")
 
+        # 8) Nuevo estado
         state = self.get_state()
-        done = False
-
-        return state, reward, done
+        return state, reward, False
