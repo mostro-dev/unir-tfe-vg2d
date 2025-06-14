@@ -1,3 +1,6 @@
+
+from enum import Enum
+
 # VisualBoyAdvance window region config (macOS)
 y_offset = 55
 x_offset = 64
@@ -13,3 +16,11 @@ TILE_HEIGHT = 35
 TILE_WIDTH = 32
 
 WHITE_THRESHOLD = 215
+
+
+class TileType(str, Enum):
+    FLOOR = "FLOOR"
+    WALL = "WALL"
+    INFO = "INFO"
+    DOOR = "DOOR"
+    UNKNOWN = "UNKNOWN"
