@@ -1,12 +1,14 @@
+#evaluate_agent.py
 from game_agent.dqn.environment import GameEnvironment
 from game_agent.dqn.agent.dqn_agent import DQNAgent
+from game_agent.dqn.constants import ACTIONS  # Importamos la lista de acciones
 import time
 
 
 def evaluate(num_steps=50):
     print("[EVAL] Cargando entorno y modelo...")
     env = GameEnvironment()
-    agent = DQNAgent(state_dim=4, action_dim=5)
+    agent = DQNAgent(state_dim=4, action_dim=len(ACTIONS))
     agent.load("dqn_model.keras")  # Asegúrate de que este archivo exista
 
     state = env.get_state()
@@ -16,7 +18,9 @@ def evaluate(num_steps=50):
 
     for step in range(num_steps):
         # Usamos solo la política aprendida
-        action = agent.select_action(state, explore=False)
+        action_idx = agent.select_action(state, explore=False)
+        action = action_idx  # ✅ Ya es un string
+
         next_state, reward, done = env.step(action)
         print(
             f"[EVAL] Paso {step + 1}: Acción={action}, Recompensa={reward:.2f}")

@@ -6,7 +6,7 @@ from game_agent.dqn.environment import GameEnvironment
 import numpy as np
 
 NUM_EPISODES = 10
-MAX_STEPS_PER_EPISODE = 30
+MAX_STEPS_PER_EPISODE = 60
 
 ACTIONS = ['up', 'right', 'down', 'left', 'z']
 
@@ -24,8 +24,8 @@ def train():
         for step in range(MAX_STEPS_PER_EPISODE):
             global_step += 1
 
-            action_idx = agent.select_action(state)
-            action = ACTIONS[action_idx]
+            action = agent.select_action(state)
+            action_idx = ACTIONS.index(action)
 
             next_state, reward, done = env.step(action)
             agent.store_transition(state, action_idx, reward, next_state, done)
