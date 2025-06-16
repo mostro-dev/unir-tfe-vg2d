@@ -37,7 +37,7 @@ def compare_tiles(tile1, tile2, threshold=0.2):
     return diff > threshold
 
 
-def get_surrounding_obstacles(tiles, player_top_left=(4, 3), white_threshold=180, debug=True):
+def get_surrounding_obstacles(tiles, player_top_left=(4, 3), white_threshold=180, debug=False):
     """
     Detecta si hay obstáculos en las direcciones cardinales desde el bloque 2x2 del jugador.
 

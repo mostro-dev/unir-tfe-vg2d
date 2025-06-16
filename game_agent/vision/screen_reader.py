@@ -18,7 +18,7 @@ def capture_region(region=None):
     return image
 
 
-def save_image(image, label="debug", folder="./game_agent/vision/debug_captures"):
+def save_image(image, label="debug", folder="./game_agent/vision/debug_captures", debug=False):
     """
     Saves image with timestamp and label.
 
@@ -34,4 +34,5 @@ def save_image(image, label="debug", folder="./game_agent/vision/debug_captures"
     filename = f"{label}_{timestamp}.png"
     path = os.path.join(folder, filename)
     cv2.imwrite(path, image)
-    print(f"[DEBUG] Imagen guardada: {path}")
+    if debug:
+        print(f"[DEBUG] Imagen guardada: {path}")

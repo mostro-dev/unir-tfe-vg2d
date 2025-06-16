@@ -15,7 +15,7 @@ label = "debug"
 label_grid = "debug_grid"
 
 
-def save_image_pipeline(image, low=0.7, high=0.85, mid=100):
+def save_image_pipeline(image, low=0.7, high=0.85, mid=100, debug=False):
     image = color.rgb2gray(image)
     dilated_image = morphology.dilation(image, selem)
     dilated_eroded_image = morphology.erosion(dilated_image, selem_2)
@@ -39,5 +39,6 @@ def save_image_pipeline(image, low=0.7, high=0.85, mid=100):
     result_with_grid = overlay_red_grid(result)
     cv2.imwrite(path_grid, result_with_grid)
 
-    print(f"[DEBUG] Imagen guardada: {path}")
+    if debug:
+        print(f"[DEBUG] Imagen guardada: {path}")
     return result
