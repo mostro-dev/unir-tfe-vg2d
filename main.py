@@ -20,13 +20,13 @@ print("Starting in 3 seconds...")
 time.sleep(3)
 
 
-# if __name__ == "__main__":
-#     print("Iniciando entrenamiento del agente DQN...")
-#     train()
-
-
 if __name__ == "__main__":
-    evaluate(num_steps=50)
+    print("Iniciando entrenamiento del agente DQN...")
+    train()
+
+
+# if __name__ == "__main__":
+#     evaluate(num_steps=50)
 
 # Inicializar entorno
 

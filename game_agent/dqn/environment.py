@@ -19,7 +19,7 @@ from game_agent.vision.oak_zone_detector import is_oak_zone_triggered
 
 class GameEnvironment:
     BUILDING_THRESHOLD = 85  # umbral para detectar entrada a edificio
-    OAK_STEPS_BACK = 5  # pasos hacia atrás en zona Oak
+    OAK_STEPS_BACK = 2  # pasos hacia atrás en zona Oak
 
     def __init__(self, save_mode: bool = True):
         # flag que indica si persistimos el world_map en disco
@@ -62,13 +62,21 @@ class GameEnvironment:
 
     def handle_oak_zone(self, current_image):
         """
-        Si la zona de Oak está activa, fuerza a bajar 5 tiles y penaliza.
+        Si la zona de Oak está activa, fuerza a bajar self.OAK_STEPS_BACK tiles
+        y penaliza, actualizando también la posición lógica y el mapa.
         """
         if is_oak_zone_triggered(current_image, debug=False):
             print("⚠️ Zona Oak detectada: forzando salida ↓↓")
-            for _ in range(self.OAK_STEPS_BACK):
+            for _ in range(self.OAK_STEPS_BACK):  # por ejemplo 2
                 move("down")
                 time.sleep(1)
+                # *** actualizo la posición lógica y el mapa ***
+                self.agent_pos = self._future_coord('down')
+                self.world_map.update_tile(
+                    self.agent_pos, TileType.FLOOR, prob=1.0)
+                self.world_map.mark_visited(self.agent_pos)
+                if self.save_mode:
+                    self.world_map.save()
             return True, -10.0
         return False, 0.0
 
@@ -171,14 +179,14 @@ class GameEnvironment:
         Ejecuta la acción, calcula recompensa, actualiza posición lógica,
         y registra el tile en world_map (con penalización por revisitas).
         """
-        # 1) Oak‐zone
+        # 1) captura previa y oak-zone
         prev_img = self.capture_and_process()
         triggered, oak_penalty = self.handle_oak_zone(prev_img)
         if triggered:
-            # Si entró en zona Oak, solo penalizamos y devolvemos estado
+            # devolvemos el estado tras haber forzado la salida
             return self.get_state(), oak_penalty, False
 
-        # 2) Calculamos futura coordenada lógica
+        # 2) calculamos la coord lógica futura
         next_coord = self._future_coord(action)
 
         # 3) Ejecutamos la acción física

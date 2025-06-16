@@ -1,12 +1,17 @@
 # game_agent/dqn/train_dqn.py
+import os
+import shutil
 
 from game_agent.dqn.agent.dqn_agent import DQNAgent
 from game_agent.dqn.environment import GameEnvironment
 
 import numpy as np
 
-NUM_EPISODES = 3
-MAX_STEPS_PER_EPISODE = 10
+NUM_EPISODES = 50
+MAX_STEPS_PER_EPISODE = 50
+
+# Cada cuántos episodios guardamos un checkpoint
+CHECKPOINT_INTERVAL = 10
 
 ACTIONS = ['up', 'right', 'down', 'left', 'z']
 
@@ -66,7 +71,17 @@ def train():
             f"Interac: {interaction_rate:.2f}"
         )
 
-    # Aquí iremos añadiendo checkpoints más adelante
+        # Aquí iremos añadiendo checkpoints más adelante
+        if (episode + 1) % CHECKPOINT_INTERVAL == 0:
+            # Modelo
+            model_ckpt = f"dqn_model_ep{episode+1}.keras"
+            agent.save(model_ckpt)
+            # Mapa
+            env.world_map.save()  # actualiza game_agent/map/world_map.json
+            map_src = env.world_map.path
+            map_ckpt = f"{os.path.splitext(map_src)[0]}_ep{episode+1}.json"
+            shutil.copy(map_src, map_ckpt)
+            print(f"[CHECKPOINT] Modelo → {model_ckpt}, Mapa → {map_ckpt}")
 
     agent.save("dqn_model.keras")
 
