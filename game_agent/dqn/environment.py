@@ -21,6 +21,17 @@ class GameEnvironment:
     BUILDING_THRESHOLD = 85  # umbral para detectar entrada a edificio
     OAK_STEPS_BACK = 2  # pasos hacia atrás en zona Oak
 
+    REWARDS = {
+        "move_success": 1,
+        "move_revisit": 0,
+        "move_wall": -1.0,
+        "move_no_wall": -0.5,
+        "interaction_success": 2.0,
+        "building_entry": 3.0,
+        "building_exit": 0.5,
+        "oak_zone_penalty": -10.0
+    }
+
     def __init__(self, save_mode: bool = True):
         # flag que indica si persistimos el world_map en disco
         self.save_mode = save_mode
@@ -80,7 +91,7 @@ class GameEnvironment:
             return True, -10.0
         return False, 0.0
 
-    def image_changed(self, img1, img2, threshold=15, debug=False):
+    def image_changed(self, img1, img2, threshold=15, debug=True):
         """Compara diferencia media absoluta entre imágenes."""
         if img1.shape != img2.shape:
             return True
@@ -210,12 +221,12 @@ class GameEnvironment:
                 prev_visits = self.world_map.map.get(
                     next_coord, {}).get("_visits", 0)
                 if prev_visits > 0:
-                    reward -= 0.1
+                    reward += self.REWARDS["move_revisit"]
                     if debug:
                         print(
                             f"[DEBUG] Revisitando {next_coord}. Penalización: -0.1")
                 else:
-                    reward += 0.2
+                    reward += self.REWARDS["move_success"]
                     if debug:
                         print(
                             f"[DEBUG] Primera visita a {next_coord}. Recompensa: +0.2")
@@ -231,12 +242,12 @@ class GameEnvironment:
             else:
                 # No se movió: confirmamos si era pared real o no
                 if self.is_real_obstacle(action):
-                    reward -= 1.0
+                    reward += self.REWARDS["move_wall"]
                     if debug:
                         print(
                             f"[DEBUG] Choque contra pared con {action}. Recompensa: -1.0")
                 else:
-                    reward -= 0.5
+                    reward += self.REWARDS["move_no_wall"]
                     if debug:
                         print(
                             f"[DEBUG] Sin movimiento pero no pared. Recompensa: -0.5")
@@ -246,7 +257,7 @@ class GameEnvironment:
             frame = capture_region(GAME_REGION)
             dialog = is_dialog_open_by_template(frame)
             if dialog and not self.is_text_in_screen:
-                reward += 2.0
+                reward += self.REWARDS["interaction_success"]
                 self.is_text_in_screen = True
                 if debug:
                     print("[DEBUG] Interacción exitosa con Z. Recompensa: +2.0")
@@ -274,7 +285,7 @@ class GameEnvironment:
         # 7) Detección de entrada a edificio
         if self.image_changed(prev_img, new_img, threshold=self.BUILDING_THRESHOLD):
             print("🏠 Cambio visual fuerte: prob. entró a edificio")
-            reward += 3.0
+            reward += self.REWARDS["building_entry"]
             # Forzamos la salida
             for _ in range(10):
                 move("down")
@@ -287,12 +298,12 @@ class GameEnvironment:
                         door_coord, TileType.DOOR, prob=1.0)
                     if self.save_mode:
                         self.world_map.save()
-                    reward += 0.5
+                    reward += self.REWARDS["building_exit"]
                     if debug:
                         print("[DEBUG] Salió del edificio. Puerta registrada.")
                     break
             else:
-                reward -= 10.0
+                reward += self.REWARDS["oak_zone_penalty"]
                 if debug:
                     print("[DEBUG] No salió del edificio. Penalización: -10.0")
 
