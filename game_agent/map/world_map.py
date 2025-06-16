@@ -9,15 +9,30 @@ class WorldMap:
     def __init__(self, path="game_agent/map/world_map.json", debug=False):
         self.path = path
         self.debug = debug
-        # { (x,y): { "FLOOR": prob, … , "_visits": n } }
-        self.map = {(0, 0): {TileType.FLOOR.value: 1.0, "_visits": 0}}
+        # { (x,y): { TileType.VALUE: prob, …, "_counts": {TileType.VALUE: n, …}, "_visits": n } }
+        self.map = {
+            (0, 0): {
+                TileType.FLOOR.value: 1.0,
+                "_counts": {TileType.FLOOR.value: 1},
+                "_visits": 0
+            }
+        }
 
-    def update_tile(self, coord, tile_type: TileType, prob: float):
+    def update_tile(self, coord, tile_type: TileType):
         entry = self.map.setdefault(coord, {})
-        entry[tile_type.value] = prob
+        # 1) Asegurar diccionario de conteos
+        counts = entry.setdefault("_counts", {})
+        key = tile_type.value
+        counts[key] = counts.get(key, 0) + 1
+
+        # 2) Recalcular probabilidades
+        total = sum(counts.values())
+        for t, c in counts.items():
+            entry[t] = c / total
+
         if self.debug:
-            print(
-                f"[DEBUG][WorldMap] update_tile {coord} → {tile_type.value} (p={prob:.2f})")
+            probs = ", ".join(f"{t}={entry[t]:.2f}" for t in counts)
+            print(f"[DEBUG][WorldMap] update_tile {coord} → {probs}")
 
     def mark_visited(self, coord):
         entry = self.map.setdefault(coord, {})
@@ -27,9 +42,11 @@ class WorldMap:
                 f"[DEBUG][WorldMap] mark_visited {coord} → visitas={entry['_visits']}")
 
     def save(self):
-        # Convertir claves tuple → "x,y" para JSON
         serializable = {
-            f"{x},{y}": entry
+            f"{x},{y}": {
+                **{k: v for k, v in entry.items() if k != "_counts"},
+                # opcionalmente no vuelcas _counts al JSON
+            }
             for (x, y), entry in self.map.items()
         }
         os.makedirs(os.path.dirname(self.path), exist_ok=True)

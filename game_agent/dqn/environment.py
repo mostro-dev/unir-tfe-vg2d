@@ -26,10 +26,10 @@ class GameEnvironment:
         "move_revisit": 0,
         "move_wall": -1.0,
         "move_no_wall": -0.5,
-        "interaction_success": 2.0,
-        "building_entry": 3.0,
+        "interaction_success": 1.5,
+        "building_entry": 2,
         "building_exit": 0.5,
-        "oak_zone_penalty": -10.0
+        "oak_zone_penalty": -5
     }
 
     def __init__(self, save_mode: bool = True):
@@ -44,7 +44,7 @@ class GameEnvironment:
         self.world_map = WorldMap()
         self.agent_pos = (0, 0)
         # inicializamos la posición de arranque como piso
-        self.world_map.update_tile(self.agent_pos, TileType.FLOOR, prob=1.0)
+        self.world_map.update_tile(self.agent_pos, TileType.FLOOR)
         self.world_map.mark_visited(self.agent_pos)
         if self.save_mode:
             self.world_map.save()
@@ -84,7 +84,7 @@ class GameEnvironment:
                 # *** actualizo la posición lógica y el mapa ***
                 self.agent_pos = self._future_coord('down')
                 self.world_map.update_tile(
-                    self.agent_pos, TileType.FLOOR, prob=1.0)
+                    self.agent_pos, TileType.FLOOR)
                 self.world_map.mark_visited(self.agent_pos)
                 if self.save_mode:
                     self.world_map.save()
@@ -158,7 +158,7 @@ class GameEnvironment:
             if debug:
                 print(f"[DEBUG] Interactuó y luego movió a {direction}")
             coord = self._future_coord(direction)
-            self.world_map.update_tile(coord, TileType.INFO, prob=1.0)
+            self.world_map.update_tile(coord, TileType.INFO)
             if self.save_mode:
                 self.world_map.save()
             return False
@@ -167,7 +167,7 @@ class GameEnvironment:
         if debug:
             print(f"[DEBUG] Obstáculo real en {direction}")
         coord = self._future_coord(direction)
-        self.world_map.update_tile(coord, TileType.WALL, prob=1.0)
+        self.world_map.update_tile(coord, TileType.WALL)
         if self.save_mode:
             self.world_map.save()
         return True
@@ -224,14 +224,14 @@ class GameEnvironment:
                     reward += self.REWARDS["move_revisit"]
                     if debug:
                         print(
-                            f"[DEBUG] Revisitando {next_coord}. Penalización: -0.1")
+                            f"[DEBUG] Revisitando {next_coord}. Penalización: {self.REWARDS['move_revisit']}")
                 else:
                     reward += self.REWARDS["move_success"]
                     if debug:
                         print(
-                            f"[DEBUG] Primera visita a {next_coord}. Recompensa: +0.2")
+                            f"[DEBUG] Primera visita a {next_coord}. Recompensa: {self.REWARDS['move_success']}")
                     self.world_map.update_tile(
-                        next_coord, TileType.FLOOR, prob=1.0)  # Marcamos como FLOOR
+                        next_coord, TileType.FLOOR)  # Marcamos como FLOOR
 
                 # Actualizamos posición y marcamos visita
                 self.agent_pos = next_coord
@@ -245,12 +245,12 @@ class GameEnvironment:
                     reward += self.REWARDS["move_wall"]
                     if debug:
                         print(
-                            f"[DEBUG] Choque contra pared con {action}. Recompensa: -1.0")
+                            f"[DEBUG] Choque contra pared con {action}. Recompensa: {self.REWARDS['move_wall']}")
                 else:
                     reward += self.REWARDS["move_no_wall"]
                     if debug:
                         print(
-                            f"[DEBUG] Sin movimiento pero no pared. Recompensa: -0.5")
+                            f"[DEBUG] Sin movimiento pero no pared. Recompensa: {self.REWARDS['move_no_wall']}")
 
         # 6) Interacción con 'z'
         else:
@@ -260,10 +260,11 @@ class GameEnvironment:
                 reward += self.REWARDS["interaction_success"]
                 self.is_text_in_screen = True
                 if debug:
-                    print("[DEBUG] Interacción exitosa con Z. Recompensa: +2.0")
+                    print(
+                        f"[DEBUG] Interacción exitosa con Z. Recompensa: {self.REWARDS['interaction_success']}")
                 # Registramos INFO en la casilla con la última dirección
                 coord = self._future_coord(self.last_direction)
-                self.world_map.update_tile(coord, TileType.INFO, prob=1.0)
+                self.world_map.update_tile(coord, TileType.INFO)
                 if self.save_mode:
                     self.world_map.save()
 
@@ -295,17 +296,19 @@ class GameEnvironment:
                     # La puerta estará justo arriba
                     door_coord = self._future_coord('up')
                     self.world_map.update_tile(
-                        door_coord, TileType.DOOR, prob=1.0)
+                        door_coord, TileType.DOOR)
                     if self.save_mode:
                         self.world_map.save()
                     reward += self.REWARDS["building_exit"]
                     if debug:
-                        print("[DEBUG] Salió del edificio. Puerta registrada.")
+                        print(
+                            f"[DEBUG] Salió del edificio. Puerta registrada. Recompensa: {self.REWARDS['building_exit']}")
                     break
             else:
                 reward += self.REWARDS["oak_zone_penalty"]
                 if debug:
-                    print("[DEBUG] No salió del edificio. Penalización: -10.0")
+                    print(
+                        f"[DEBUG] No salió del edificio. Penalización: {self.REWARDS['oak_zone_penalty']}")
 
         # 8) Nuevo estado
         state = self.get_state()
