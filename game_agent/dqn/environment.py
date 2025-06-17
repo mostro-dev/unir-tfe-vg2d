@@ -1,5 +1,6 @@
 # game_agent/dqn/environment.py
 
+from collections import deque
 import glob
 import os
 import time
@@ -22,19 +23,21 @@ class GameEnvironment:
     OAK_STEPS_BACK = 2  # pasos hacia atrás en zona Oak
 
     REWARDS = {
-        "move_success": 1,
-        "move_revisit": 0,
-        "move_wall": -1.0,
-        "move_no_wall": -0.5,
-        "interaction_success": 1.5,
-        "building_entry": 2,
-        "building_exit": 0.5,
-        "oak_zone_penalty": -5
+        "move_success": 5,
+        "move_revisit": -0.5,
+        "move_wall": -5.0,
+        "move_no_wall": 0,
+        "interaction_success": 10,
+        "building_entry": 20,
+        "building_exit": 5,
+        "oak_zone_penalty": -1,
+        "spammed_a_button": -5,
     }
 
-    def __init__(self, save_mode: bool = True):
+    def __init__(self, save_mode: bool = True, punish_revisit: bool = True):
         # flag que indica si persistimos el world_map en disco
         self.save_mode = save_mode
+        self.punish_revisit = punish_revisit
 
         # visión
         self.tile_height = TILE_HEIGHT
@@ -51,6 +54,10 @@ class GameEnvironment:
 
         # estado para diálogo
         self.is_text_in_screen = False
+
+        # para detectar spam de Z
+        self.last_action = None
+        self.action_history = deque(maxlen=3)
 
     def _future_coord(self, action: str):
         """Devuelve la coordenada lógica resultante de aplicar `action`."""
@@ -98,7 +105,8 @@ class GameEnvironment:
         diff = np.abs(img1.astype(np.int16) - img2.astype(np.int16))
         mean_diff = np.mean(diff)
         if debug:
-            print(f"[DEBUG] Difum promedio: {mean_diff:.2f}")
+            print(
+                f"[DEBUG] Diferencia imágenes es en promedio: {mean_diff:.2f}")
         return mean_diff > threshold
 
     def extract_tile_in_direction(self, direction):
@@ -122,7 +130,7 @@ class GameEnvironment:
         bot = np.hstack(imgs[2:])
         return np.vstack([top, bot])
 
-    def is_real_obstacle(self, direction, threshold=0.05, debug=True):
+    def is_real_obstacle(self, direction, threshold=12, debug=True):
         """
         Comprueba si tras intentar moverse e interactuar sigue bloqueado:
         si es pared → devuelve True (guarda WALL),
@@ -173,23 +181,37 @@ class GameEnvironment:
         return True
 
     def get_state(self):
-        """
-        Estado = vector [up, right, down, left]
-        según get_surrounding_obstacles sobre la imagen procesada.
-        """
+        # 1) los 4 obstáculos originales
         proc = self.capture_and_process()
         tiles = split_into_tiles(proc, self.tile_height, self.tile_width)
         obs = get_surrounding_obstacles(tiles, player_top_left=(4, 3))
-        return np.array([
-            float(obs["up"]), float(obs["right"]),
-            float(obs["down"]), float(obs["left"])
-        ], dtype=np.float32)
+        basic = np.array([float(obs[d]) for d in ("up", "right", "down", "left")],
+                         dtype=np.float32)
+
+        # 2) ahora extraigo del mapa local las probabilidades para cada vecino
+        extras = []
+        for direction in ("up", "right", "down", "left"):
+            coord = self._future_coord(direction)
+            entry = self.world_map.map.get(coord, {})
+            # ejemplo: FLOOR, INFO, DOOR, WALL, _visits
+            extras.append(entry.get(TileType.FLOOR.value, 0.0))
+            extras.append(entry.get(TileType.INFO.value,  0.0))
+            extras.append(entry.get(TileType.DOOR.value,  0.0))
+            extras.append(entry.get(TileType.WALL.value,  0.0))
+            # podrías normalizar _visits si te interesa:
+            extras.append(entry.get("_visits", 0) / 10.0)
+
+        return np.concatenate([basic, np.array(extras, dtype=np.float32)])
 
     def step(self, action: str, debug: bool = True):
         """
         Ejecuta la acción, calcula recompensa, actualiza posición lógica,
         y registra el tile en world_map (con penalización por revisitas).
         """
+        if debug:
+            print(
+                f"\n[DEBUG] Posición actual del agente: {self.agent_pos}\n")
+
         # 1) captura previa y oak-zone
         prev_img = self.capture_and_process()
         triggered, oak_penalty = self.handle_oak_zone(prev_img)
@@ -211,8 +233,15 @@ class GameEnvironment:
 
         # 4) Captura tras la acción y comparamos
         new_img = self.capture_and_process()
-        moved = self.image_changed(prev_img, new_img, threshold=15)
+        moved = self.image_changed(prev_img, new_img, threshold=18)
         reward = 0.0
+
+        self.action_history.append(action)
+        if list(self.action_history).count('z') > 2:
+            reward += self.REWARDS["spammed_a_button"]
+            if debug:
+                print(
+                    f"[DEBUG] Spam de Z en las últimas 2 acciones. Penalización: {self.REWARDS['spammed_a_button']}")
 
         # 5) Movimiento: recompensa o castigo, y actualización de visitas
         if action in ['up', 'down', 'left', 'right']:
@@ -220,7 +249,7 @@ class GameEnvironment:
                 # Antes de marcar, leemos cuántas veces visitamos next_coord
                 prev_visits = self.world_map.map.get(
                     next_coord, {}).get("_visits", 0)
-                if prev_visits > 0:
+                if prev_visits > 0 and self.punish_revisit:
                     reward += self.REWARDS["move_revisit"]
                     if debug:
                         print(
@@ -235,6 +264,9 @@ class GameEnvironment:
 
                 # Actualizamos posición y marcamos visita
                 self.agent_pos = next_coord
+                if debug:
+                    print(
+                        f"\n[DEBUG] Actualizando posición lógica del agente a:: {self.agent_pos}")
                 self.world_map.mark_visited(self.agent_pos)
                 if self.save_mode:
                     self.world_map.save()
