@@ -7,8 +7,8 @@ from game_agent.dqn.environment import GameEnvironment
 
 import numpy as np
 
-NUM_EPISODES = 50
-MAX_STEPS_PER_EPISODE = 50
+NUM_EPISODES = 30
+MAX_STEPS_PER_EPISODE = 30
 
 # Cada cuántos episodios guardamos un checkpoint
 CHECKPOINT_INTERVAL = 10
@@ -18,7 +18,7 @@ ACTIONS = ['up', 'right', 'down', 'left', 'z']
 
 def train():
     env = GameEnvironment(True)  # True para guardar el mapa
-    agent = DQNAgent(state_dim=4, action_dim=len(ACTIONS))
+    agent = DQNAgent(state_dim=24, action_dim=len(ACTIONS))
 
     # Para llevar la recompensa de los últimos episodios
     episode_rewards = []
