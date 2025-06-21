@@ -20,6 +20,7 @@ from game_agent.vision.oak_zone_detector import is_oak_zone_triggered
 
 class GameEnvironment:
     BUILDING_THRESHOLD = 85  # umbral para detectar entrada a edificio
+    IMAGE_CHANGED_THRESHOLD = 35  # umbral para detectar cambios visuales
     OAK_STEPS_BACK = 2  # pasos hacia atrás en zona Oak
 
     REWARDS = {
@@ -215,67 +216,168 @@ class GameEnvironment:
     def step(self, action: str, debug: bool = True):
         """
         Ejecuta la acción, calcula recompensa, actualiza posición lógica
-        AL FINAL, y registra el tile en world_map.
-        Penaliza si la tile candidata está en self.recent_tiles (últimas 4).
+        AL FINAL, y registra el tile en world_map (con penalización por revisitas).
+        Detección de movimiento combinando diff global y diff local de parches.
         """
+        # --- 0) Debug inicial ---
         if debug:
             print(f"\n[DEBUG] Antes de step – agent_pos={self.agent_pos}")
 
-        # 1) Captura previa y Oak Zone
+        # --- 1) Captura previa y Oak-zone ---
         prev_img = self.capture_and_process()
-        triggered, oak_penalty = self.handle_oak_zone(prev_img)
+        triggered, oak_penalty = self.handle_oak_zone(prev_img, debug=debug)
         if triggered:
             if debug:
-                print(f"[DEBUG] Tras Oak Zone – agent_pos={self.agent_pos}")
+                print(
+                    f"[DEBUG] Tras Oak Zone – agent_pos={self.agent_pos}, penalidad={oak_penalty}")
             return self.get_state(), oak_penalty, False
 
-        # 2) Calculamos la coord “candidata”
+        # --- 2) Coordenada candidata sin actualizar aún ---
         next_coord = self._future_coord(action)
+        if debug:
+            print(
+                f"[DEBUG] Acción candidata: {action}, next_coord={next_coord}")
 
-        # 3) Ejecutamos la acción física
+        # --- 3) Ejecutamos la acción física ---
         if action in ['up', 'down', 'left', 'right']:
             move(action)
             self.last_direction = action
-            time.sleep(1)
         else:  # 'z'
             press('z')
             time.sleep(1)
+        print(
+            f"\n[DEBUG] Acción ejecutada: {action}, agent_pos ACTUAL={self.agent_pos}")
 
-        # 4) Nueva captura y comprobamos si movió
+        # --- 4) Captura tras la acción ---
         new_img = self.capture_and_process()
-        moved = self.image_changed(prev_img, new_img, threshold=15)
 
+        # --- 5.1) Diff global para detectar movimiento general ---
+        global_moved = self.image_changed(
+            prev_img, new_img, threshold=self.IMAGE_CHANGED_THRESHOLD, debug=debug)
+        if debug:
+            print(f"[DEBUG] diff global → moved_global={global_moved}")
+
+        # --- 5.2) Gate: si next_coord ya es muro, fuerza no movimiento ---
+        entry = self.world_map.map.get(next_coord, {})
+        if entry.get(TileType.WALL.value, 0.0) >= 1.0:
+            moved = False
+            if debug:
+                print(
+                    f"[DEBUG] next_coord {next_coord} marcado como WALL → moved=False")
+        else:
+            # --- 5.3) Si es direccional, calculamos diff de parche ---
+            patch_moved = False
+            if action in ['up', 'down', 'left', 'right']:
+                tiles_prev = split_into_tiles(
+                    prev_img, self.tile_height, self.tile_width)
+                tiles_new = split_into_tiles(
+                    new_img,  self.tile_height, self.tile_width)
+                dir_map = {
+                    "up":    [(-1, -2), (0, -2), (-1, -1), (0, -1)],
+                    "down":  [(-1, +2), (0, +2), (-1, +3), (0, +3)],
+                    "left":  [(-2, -1), (-2, 0),  (-1, -1), (-1, 0)],
+                    "right": [(+2, -1), (+2, 0),  (+3, -1), (+3, 0)],
+                }
+                cx, cy = self.agent_pos
+                prev_patches, new_patches = [], []
+                for dx, dy in dir_map[action]:
+                    tx, ty = cx + dx, cy + dy
+                    if 0 <= ty < len(tiles_prev) and 0 <= tx < len(tiles_prev[0]):
+                        prev_patches.append(tiles_prev[ty][tx])
+                        new_patches.append(tiles_new[ty][tx])
+                    else:
+                        zero = np.zeros_like(tiles_prev[0][0])
+                        prev_patches.append(zero)
+                        new_patches.append(zero)
+                # stackea y diff medio
+                prev_stack = np.stack(prev_patches).astype(np.int16)
+                new_stack = np.stack(new_patches).astype(np.int16)
+                diff_patch = np.mean(np.abs(prev_stack - new_stack))
+                patch_moved = diff_patch > 5
+                if debug:
+                    print(
+                        f"[DEBUG] diff patch = {diff_patch:.2f} → patch_moved={patch_moved}")
+
+            # --- 5.4) Validación con mapa de obstáculos antes de mover ---
+            tiles_prev = split_into_tiles(
+                prev_img, self.tile_height, self.tile_width)
+            obs_prev = get_surrounding_obstacles(
+                tiles_prev, player_top_left=(4, 3))
+            if action in ['up', 'down', 'left', 'right']:
+                if not obs_prev[action]:
+                    moved = global_moved
+                    if debug:
+                        print(
+                            f"[DEBUG] SIN obstáculo en '{action}' → moved=global_moved={global_moved}")
+                else:
+                    moved = global_moved and patch_moved
+                    if debug:
+                        print(
+                            f"[DEBUG] CON posible obstáculo en '{action}' → moved=global_moved AND patch_moved = {moved}")
+            else:
+                # acción 'z' o no direccional
+                moved = global_moved
+
+        # --- 6) Spam de Z ---
         reward = 0.0
+        self.action_history.append(action)
+        if self.action_history.count('z') > 2:
+            reward += self.REWARDS["spammed_a_button"]
+            if debug:
+                print(
+                    f"[DEBUG] Spam de Z detectado. Penalización: {self.REWARDS['spammed_a_button']}")
 
-        # 5) Movimiento (sin actualizar aún self.agent_pos)
+        # --- 7) Movimiento: asignamos recompensa y actualizamos posición al final ---
         if action in ['up', 'down', 'left', 'right']:
             if moved:
-                if next_coord in self.recent_tiles:
-                    reward += self.REWARDS["move_revisit"]
+                x, y = next_coord
+                # clamp para no-negativos
+                if x < 0 or y < 0:
+                    moved = False
                     if debug:
                         print(
-                            f"[DEBUG] Revisitando {next_coord}. Penalización: {self.REWARDS['move_revisit']}")
+                            f"[DEBUG] next_coord {next_coord} fuera de límites → moved=False")
+                    # raise ValueError(
+                    #     f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
                 else:
-                    reward += self.REWARDS["move_success"]
+                    prev_visits = entry.get("_visits", 0)
+                    if prev_visits > 0 and self.punish_revisit:
+                        reward += self.REWARDS["move_revisit"]
+                        if debug:
+                            print(
+                                f"[DEBUG] Revisitando {next_coord}. Penalización: {self.REWARDS['move_revisit']}"
+                            )
+                    else:
+                        reward += self.REWARDS["move_success"]
+                        if debug:
+                            print(
+                                f"[DEBUG] Movido con éxito a {next_coord}. Recompensa: {self.REWARDS['move_success']}"
+                            )
+                        # marcamos provisionalmente como FLOOR
+                        self.world_map.update_tile(next_coord, TileType.FLOOR)
+                    # finalmente actualizamos posición lógica
+                    self.agent_pos = next_coord
                     if debug:
                         print(
-                            f"[DEBUG] Primera visita a {next_coord}. Recompensa: {self.REWARDS['move_success']}")
-                    # Marcamos provisionalmente tile como FLOOR
-                    self.world_map.update_tile(next_coord, TileType.FLOOR)
+                            f"\n[DEBUG] agent_pos actualizado a {self.agent_pos}")
+                    self.world_map.mark_visited(self.agent_pos)
+                    if self.save_mode:
+                        self.world_map.save()
             else:
-                # choque o “no pared”
-                if self.is_real_obstacle(action):
+                # sin movimiento: chequeo obstáculo real
+                if self.is_real_obstacle(action, debug=debug):
                     reward += self.REWARDS["move_wall"]
                     if debug:
                         print(
-                            f"[DEBUG] Choque pared con {action}. Recompensa: {self.REWARDS['move_wall']}")
+                            f"[DEBUG] Choque pared con {action}. Recompensa: {self.REWARDS['move_wall']}"
+                        )
                 else:
                     reward += self.REWARDS["move_no_wall"]
                     if debug:
                         print(
-                            f"[DEBUG] No moved/no wall con {action}. Recompensa: {self.REWARDS['move_no_wall']}")
-
-        # 6) Interacción 'z' (idéntica a tu lógica anterior)
+                            f"[DEBUG] No moved/no wall con {action}. Recompensa: {self.REWARDS['move_no_wall']}"
+                        )
+        # --- 8) Interacción con 'z' (sin cambios) ---
         else:
             frame = capture_region(GAME_REGION)
             dialog = is_dialog_open_by_template(frame)
@@ -284,7 +386,8 @@ class GameEnvironment:
                 self.is_text_in_screen = True
                 if debug:
                     print(
-                        f"[DEBUG] Interacción exitosa con Z. Recompensa: {self.REWARDS['interaction_success']}")
+                        f"[DEBUG] Interacción exitosa con Z. Recompensa: {self.REWARDS['interaction_success']}"
+                    )
                 coord = self._future_coord(self.last_direction)
                 self.world_map.update_tile(coord, TileType.INFO)
                 if self.save_mode:
@@ -293,8 +396,7 @@ class GameEnvironment:
                 while True:
                     press('z')
                     time.sleep(1)
-                    frame = capture_region(GAME_REGION)
-                    if not is_dialog_open_by_template(frame):
+                    if not is_dialog_open_by_template(capture_region(GAME_REGION)):
                         if debug:
                             print("[DEBUG] Diálogo cerrado.")
                         self.is_text_in_screen = False
@@ -302,41 +404,37 @@ class GameEnvironment:
             elif not dialog and self.is_text_in_screen:
                 self.is_text_in_screen = False
 
-        # 7) Detección de entrada a edificio
-        if self.image_changed(prev_img, new_img, threshold=self.BUILDING_THRESHOLD):
+        # --- 9) Detección de edificio (igual que antes) ---
+        if self.image_changed(prev_img, new_img, threshold=self.BUILDING_THRESHOLD, debug=debug):
             if debug:
-                print(f"[DEBUG] Antes edificio – agent_pos={self.agent_pos}")
+                print("[DEBUG] Cambio visual fuerte: posible edificio")
             reward += self.REWARDS["building_entry"]
-            # Forzamos salida, NO cambiamos agent_pos aquí
-            for _ in range(1):
+            for _ in range(10):
                 move("down")
                 time.sleep(1)
                 exit_img = self.capture_and_process()
-                if not self.image_changed(prev_img, exit_img, threshold=self.BUILDING_THRESHOLD):
+                if not self.image_changed(prev_img, exit_img, threshold=self.BUILDING_THRESHOLD, debug=debug):
                     door_coord = self._future_coord('up')
                     self.world_map.update_tile(door_coord, TileType.DOOR)
                     reward += self.REWARDS["building_exit"]
                     if debug:
                         print(
-                            f"[DEBUG] Salió edificio – agent_pos sigue {self.agent_pos}")
+                            f"[DEBUG] Salió del edificio. Recompensa: {self.REWARDS['building_exit']}"
+                        )
+                    if self.save_mode:
+                        self.world_map.save()
                     break
             else:
                 reward += self.REWARDS["oak_zone_penalty"]
+                if debug:
+                    print(
+                        f"[DEBUG] No salió del edificio. Penalización: {self.REWARDS['oak_zone_penalty']}"
+                    )
 
-        # 8) **AHORA** actualizamos la posición lógica si movimos
-        if action in ['up', 'down', 'left', 'right'] and moved:
-            # Actualizamos posición
-            self.agent_pos = next_coord
-            if debug:
-                print(
-                    f"[DEBUG] Finalmente agent_pos actualizado a {self.agent_pos}")
-            # Marcamos visita y guardamos
-            self.world_map.mark_visited(self.agent_pos)
-            if self.save_mode:
-                self.world_map.save()
-            # Añadimos a recent_tiles (deque de longitud 4)
-            self.recent_tiles.append(self.agent_pos)
+        time.sleep(10)
 
-        # 9) Estado y retorno
-        state = self.get_state()
-        return state, reward, False
+        # --- 10) Retorno ---
+        if debug:
+            print(f"\n[DEBUG] Posición final del agente: {self.agent_pos}")
+            print(f"[DEBUG] Paso completo – reward acumulada: {reward:.2f}\n")
+        return self.get_state(), reward, False
