@@ -390,8 +390,6 @@ class GameEnvironment:
         # --- 1) Captura previa y Oak-zone ---
         prev_img = self.capture_and_process()
         triggered, oak_penalty = self.handle_oak_zone(prev_img, debug=debug)
-        print("Oak triggerd!")
-        print(triggered)
         if triggered:
             if debug:
                 print(
@@ -412,7 +410,8 @@ class GameEnvironment:
             self.last_direction = action
         else:  # 'z'
             press('z')
-        time.sleep(1)
+
+        time.sleep(1.5)
         print(
             f"\n[DEBUG] Acción ejecutada: {action} desde la casilla={self.agent_pos}")
 
@@ -451,24 +450,25 @@ class GameEnvironment:
                 print(
                     f"[DEBUG] Spam de Z detectado. Penalización: {self.REWARDS['spammed_a_button']}")
 
-        # --- 9) Detección de edificio ---
+        building_check = self.image_changed(
+            prev_img, new_img, threshold=self.BUILDING_THRESHOLD, debug=debug)
+        time.sleep(0.5)
 
         # --- 7) Movimiento: asignamos recompensa y actualizamos posición al final ---
         if action in DIRECTIONS:
             if moved:
                 x, y = next_coord
                 # clamp para no-negativos
-                if x < -50 or y < -50:
+                if x < 0 or y < 0:
                     moved = False
                     if debug:
                         print(
                             f"[DEBUG] next_coord {next_coord} fuera de límites → moved=False")
-                    # raise ValueError(
-                    #     f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
+                    raise ValueError(
+                        f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
                 else:
-
                     # 7.1) Si se movió, chequeamos si es Edificio
-                    if self.image_changed(prev_img, new_img, threshold=self.BUILDING_THRESHOLD, debug=debug):
+                    if building_check:
                         if debug:
                             print(
                                 "[DEBUG] Cambio visual fuerte: posible edificio")
@@ -553,6 +553,7 @@ class GameEnvironment:
                         self.save_tile_sample(
                             direction=action, label="INFO", debug=debug)
                     case "WALL":
+                        reward += self.REWARDS["move_wall"]
                         self.world_map.update_tile(next_coord, TileType.WALL)
                         self.save_tile_sample(
                             direction=action, label="WALL", debug=debug)
