@@ -9,7 +9,7 @@ from game_agent.dqn.constants import ACTIONS
 
 def evaluate(num_steps=50):
     print("[EVAL] Cargando entorno y modelo…")
-    env = GameEnvironment(save_mode=False, punish_revisit=False)
+    env = GameEnvironment(save_mode=False, punish_revisit=True)
     env.world_map.load()  # cargamos el mapa previamente guardado
 
     agent = DQNAgent(state_dim=24, action_dim=len(ACTIONS))
