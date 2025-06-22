@@ -16,7 +16,7 @@ def extract_dialog_region(image, top_ratio=0.72, bottom_ratio=1.0):
     return image[top:bottom, :]
 
 
-def is_dialog_open_by_template(image, threshold=0.5, debug=False):
+def is_dialog_open_by_template(image, threshold=0.5, debug: bool =True):
     dialog_region = extract_dialog_region(image)
     dialog_gray = cv2.cvtColor(dialog_region, cv2.COLOR_BGR2GRAY)
 

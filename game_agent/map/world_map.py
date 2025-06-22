@@ -6,7 +6,7 @@ from config import TileType
 
 
 class WorldMap:
-    def __init__(self, path="game_agent/map/world_map.json", debug=False):
+    def __init__(self, path="game_agent/map/world_map.json", debug: bool = False):
         self.path = path
         self.debug = debug
         # { (x,y): { TileType.VALUE: prob, …, "_counts": {TileType.VALUE: n, …}, "_visits": n } }

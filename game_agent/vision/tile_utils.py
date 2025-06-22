@@ -1,133 +1,154 @@
 # game_agent/vision/tile_utils.py
-
 import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-from config import TILE_HEIGHT, TILE_WIDTH, WHITE_THRESHOLD
+from config import OBSTACLE_THRESHOLD, PLAYER_POSITION, TILE_HEIGHT, TILE_WIDTH, WHITE_THRESHOLD
+
+# Desplazamientos globales: ajusta estos valores hasta que la cuadrícula
+# roja cuadre perfectamente con tu personaje en pantalla.
+X_OFFSET = 0
+Y_OFFSET = 0
 
 
-def split_into_tiles(image, tile_height, tile_width):
-    rows = image.shape[0] // tile_height
-    cols = image.shape[1] // tile_width
-    tile_grid = []
-
-    for r in range(rows):
-        row = []
-        for c in range(cols):
-            tile = image[
-                r * tile_height: (r + 1) * tile_height,
-                c * tile_width: (c + 1) * tile_width
-            ]
-            row.append(tile)
-        tile_grid.append(row)
-
-    return tile_grid
-
-
-def compare_tiles(tile1, tile2, threshold=0.2):
-    if tile1.shape != tile2.shape:
-        return True
-
-    if tile1.max() > 1.0:
-        tile1 = tile1 / 255.0
-    if tile2.max() > 1.0:
-        tile2 = tile2 / 255.0
-
-    diff = np.mean(np.abs(tile1 - tile2))
-    return diff > threshold
-
-
-def get_surrounding_obstacles(tiles, player_top_left=(4, 3), white_threshold=180, debug=False):
+def split_into_tiles(image,
+                     tile_height: int = TILE_HEIGHT,
+                     tile_width:  int = TILE_WIDTH):
     """
-    Detecta si hay obstáculos en las direcciones cardinales desde el bloque 2x2 del jugador.
+    Divide `image` en tiles de tamaño (tile_height x tile_width),
+    empezando en (X_OFFSET, Y_OFFSET).
+    Retorna una lista de filas, cada fila es lista de np.ndarray.
+    """
+    h, w = image.shape[:2]
+    tiles = []
+    # Barrido vertical, partiendo de Y_OFFSET
+    for top in range(Y_OFFSET, h, tile_height):
+        row = []
+        # Barrido horizontal, partiendo de X_OFFSET
+        for left in range(X_OFFSET, w, tile_width):
+            tile = image[top: top + tile_height,
+                         left: left + tile_width]
+            row.append(tile)
+        tiles.append(row)
+    return tiles
+
+
+def is_tile_free(tile: np.ndarray, white_threshold: float = 0.2, debug: bool = True) -> bool:
+    """
+    Decide si un único tile es “libre” (blanco / transitable) o “obstáculo” (oscuro)
+    basándose en su brillo medio.
+
+    Parámetros:
+      - tile: parche de imagen (uint8 0–255 o float 0–1).
+      - white_threshold: umbral de brillo medio (0–1) para considerarlo libre.
+
+    Retorna:
+      - True si mean(tile) > white_threshold → suelo/transitable.
+      - False si mean(tile) <= white_threshold → pared/obstáculo.
+    """
+    # Convertimos siempre a float 0–1
+    arr = tile.astype(np.float32)
+    if arr.max() > 1.0:
+        arr /= 255.0
+
+    mean_val = arr.mean()
+    if debug:
+        print(f"[DEBUG] mean(tile) = {mean_val:.2f} "
+              f"→ {'Libre' if mean_val > white_threshold else 'Obstáculo'}")
+    return mean_val > white_threshold
+
+
+def get_surrounding_obstacles(tiles, player_pos=PLAYER_POSITION, white_threshold: int = OBSTACLE_THRESHOLD, debug: bool = True):
+    """
+    Detecta si hay obstáculos en las direcciones cardinales desde la posición del jugador,
+    comprobando sólo el tile adyacente en cada dirección, en el rango 0–255.
 
     Parámetros:
         tiles: matriz 2D de tiles (listas de listas de np.ndarray)
-        player_top_left: tupla (fila, columna) del tile superior izquierdo del jugador
-        white_threshold: umbral para considerar si un tile es blanco/transitable
+        player_pos: tupla (col, fila) del tile del jugador
+        white_threshold: umbral [0–255] para considerar un tile “libre” (blanco)
         debug: si True, imprime información de los tiles evaluados
 
     Retorna:
-        dict con claves 'up', 'down', 'left', 'right' y valores booleanos (True si hay obstáculo)
+        dict con claves 'up', 'down', 'left', 'right' y valores booleanos
+        (True si hay obstáculo i.e. mean(tile) < white_threshold)
     """
-    c, r = player_top_left
+    cx, cy = player_pos
 
-# up  4, 2 - 5, 2
-# ok  4, 3 - 5, 4
-    directions = {
-        'up':    [(c, r-1), (c+1, r-1)],
-        'down':  [(c, r+2), (c+1, r+2)],
-        'left':  [(c-1, r), (c-1, r+1)],
-        'right': [(c+2, r), (c+2, r+1)],
+    # offsets (dx, dy) relativos a la posición del jugador
+    dir_map = {
+        'up':    (0, -1),
+        'down':  (0, +1),
+        'left':  (-1,  0),
+        'right': (+1,  0),
     }
 
     obstacles = {}
+    for direction, (dx, dy) in dir_map.items():
+        tx, ty = cx + dx, cy + dy
 
-    for direction, positions in directions.items():
-        means = []
-        for row, col in positions:
-            if (
-                row < 0 or row >= len(tiles) or
-                col < 0 or col >= len(tiles[0])
-            ):
-                means.append(float('nan'))  # Marcamos fuera de rango como NaN
-                continue
-            tile = tiles[col][row]
-            mean_val = np.mean(tile)
-            means.append(mean_val)
+        # extraer el tile si está dentro del rango, o un parche negro si no
+        if 0 <= ty < len(tiles) and 0 <= tx < len(tiles[0]):
+            tile = tiles[ty][tx]
+        else:
+            tile = np.zeros_like(tiles[0][0])
 
-        combined_mean = np.nanmean(means)
-        found_obstacle = combined_mean < WHITE_THRESHOLD
+        # calculamos el brillo medio directamente en [0–255]
+        mean_val = float(np.mean(tile))
+        # si es menor al umbral → obstáculo
+        found_obstacle = mean_val < white_threshold
 
         obstacles[direction] = found_obstacle
 
         if debug:
             print(f"[DEBUG] Dirección '{direction}':")
-            for i, (pos, val) in enumerate(zip(positions, means)):
-                print(f"   Tile {i+1} en {pos} → mean = {val:.2f}")
-            print(f"   → Promedio combinado = {combined_mean:.2f}")
-            print(f"   → {'Obstáculo' if found_obstacle else 'Libre'}\n")
+            # print(f"   Posición tile = {(tx, ty)}")
+            print(f"   → mean = {mean_val:.2f}")
+            print(
+                f"   → {'Obstáculo' if found_obstacle else 'Libre'} (umbral={white_threshold})\n")
 
     return obstacles
 
 
-def overlay_red_grid(image, tile_height=TILE_HEIGHT, tile_width=TILE_WIDTH):
+def overlay_red_grid(image,
+                     tile_height: int = TILE_HEIGHT,
+                     tile_width:  int = TILE_WIDTH):
     """
-    Dibuja una cuadrícula roja y añade etiquetas de fila y columna en rojo.
-
-    Parámetros:
-        image: np.ndarray (grayscale o RGB)
-        tile_height: alto del tile
-        tile_width: ancho del tile
-
-    Retorna:
-        imagen con cuadrícula y etiquetas
+    Dibuja sobre `image` (grayscale o RGB) una cuadrícula roja con etiquetas,
+    usando X_OFFSET/Y_OFFSET idénticos a split_into_tiles.
     """
-    # Convertir a RGB si es una imagen en escala de grises
-    if len(image.shape) == 2:
+    # Convertir a RGB si es grayscale
+    if image.ndim == 2:
         image_rgb = np.stack([image]*3, axis=-1).astype(np.uint8)
     else:
         image_rgb = image.copy()
 
-    height, width = image_rgb.shape[:2]
-
+    h, w = image_rgb.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.4
     thickness = 1
-    color = (0, 0, 255)  # 🔴 Rojo en formato BGR
+    color = (0, 0, 255)  # BGR rojo
 
-    # Dibujar líneas horizontales y etiquetas de fila
-    for y in range(0, height, tile_height):
-        cv2.line(image_rgb, (0, y), (width, y), color, 1)
-        row_idx = y // tile_height
-        cv2.putText(image_rgb, str(row_idx), (2, y + 12), font,
-                    font_scale, color, thickness, cv2.LINE_AA)
+    # Líneas horizontales y etiquetas de fila
+    y = Y_OFFSET
+    row = 0
+    while y < h:
+        cv2.line(image_rgb, (X_OFFSET, y), (w, y), color, 1)
+        cv2.putText(image_rgb,
+                    str(row),
+                    (X_OFFSET + 2, y + 12),
+                    font, font_scale, color, thickness, cv2.LINE_AA)
+        y += tile_height
+        row += 1
 
-    # Dibujar líneas verticales y etiquetas de columna
-    for x in range(0, width, tile_width):
-        cv2.line(image_rgb, (x, 0), (x, height), color, 1)
-        col_idx = x // tile_width
-        cv2.putText(image_rgb, str(col_idx), (x + 2, 12), font,
-                    font_scale, color, thickness, cv2.LINE_AA)
+    # Líneas verticales y etiquetas de columna
+    x = X_OFFSET
+    col = 0
+    while x < w:
+        cv2.line(image_rgb, (x, Y_OFFSET), (x, h), color, 1)
+        cv2.putText(image_rgb,
+                    str(col),
+                    (x + 2, Y_OFFSET + 12),
+                    font, font_scale, color, thickness, cv2.LINE_AA)
+        x += tile_width
+        col += 1
 
     return image_rgb

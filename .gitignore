@@ -28,6 +28,7 @@ celerybeat-schedule
 __pycache__/
 *.pyc
 
-captures_pipeline/
+debug_captures_pipeline/
 debug_captures/
+debug_captures_grid/
 debug_captures_pipeline/
