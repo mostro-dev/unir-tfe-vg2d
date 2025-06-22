@@ -45,10 +45,6 @@ def is_oak_zone_triggered(image, threshold=0.85, debug: bool = True):
         res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
         max_val = np.max(res)
 
-        print(max_val)
-        print(threshold)
-        print(max_val >= threshold)
-
         if debug:
             print(
                 f"[DEBUG] Coincidencia con oak_template_{idx+1}: {max_val:.2f}")
