@@ -14,7 +14,7 @@ class WorldMap:
             (0, 0): {
                 TileType.FLOOR.value: 1.0,
                 "_counts": {TileType.FLOOR.value: 1},
-                "_visits": 0
+                "_visits": 1
             }
         }
 
@@ -44,8 +44,9 @@ class WorldMap:
     def save(self):
         serializable = {
             f"{x},{y}": {
-                **{k: v for k, v in entry.items() if k != "_counts"},
+                **{k: v for k, v in entry.items()},
                 # opcionalmente no vuelcas _counts al JSON
+                # entry
             }
             for (x, y), entry in self.map.items()
         }

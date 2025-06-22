@@ -7,8 +7,8 @@ from game_agent.dqn.environment import GameEnvironment
 
 import numpy as np
 
-NUM_EPISODES = 30
-MAX_STEPS_PER_EPISODE = 30
+NUM_EPISODES = 50
+MAX_STEPS_PER_EPISODE = 50
 
 # Cada cuántos episodios guardamos un checkpoint
 CHECKPOINT_INTERVAL = 10
