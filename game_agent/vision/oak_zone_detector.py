@@ -22,7 +22,7 @@ for path in template_paths:
     oak_templates.append(template)
 
 
-def is_oak_zone_triggered(image, threshold=0.85, debug=False):
+def is_oak_zone_triggered(image, threshold=0.85, debug: bool = True):
     """
     Evalúa si el personaje se encuentra en la zona que activa el evento del Profesor Oak.
 
@@ -44,6 +44,10 @@ def is_oak_zone_triggered(image, threshold=0.85, debug=False):
     for idx, template in enumerate(oak_templates):
         res = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
         max_val = np.max(res)
+
+        print(max_val)
+        print(threshold)
+        print(max_val >= threshold)
 
         if debug:
             print(
