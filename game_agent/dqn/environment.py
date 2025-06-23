@@ -36,9 +36,9 @@ class GameEnvironment:
         "move_no_wall": 0.0,    # neutro si no se movió pero no era pared
 
         # Interacción / edificios:
-        "interaction_success": +3.0,   # incentivo a interactuar
-        "building_entry": +4.0,   # recompensa a descubrir edificio
-        "building_exit": +1.0,   # extra al salir
+        "interaction_success": +0.5,   # incentivo a interactuar
+        "building_entry": +0.3,   # recompensa a descubrir edificio
+        "building_exit": +0.1,   # extra al salir
 
         # Peligros y mal uso:
         "oak_zone_penalty": -2.0,   # penaliza entrar en zona Oak
@@ -464,8 +464,8 @@ class GameEnvironment:
                     if debug:
                         print(
                             f"[DEBUG] next_coord {next_coord} fuera de límites → moved=False")
-                    raise ValueError(
-                        f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
+                    # raise ValueError(
+                    #     f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
                 else:
                     # 7.1) Si se movió, chequeamos si es Edificio
                     if building_check:
