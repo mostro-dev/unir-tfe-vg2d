@@ -16,6 +16,7 @@ celerybeat-schedule
 # dotenv
 .env.local
 .env.*.local
+.env
 
 # IDEs and editors
 .vscode/
@@ -25,3 +26,9 @@ celerybeat-schedule
 
 # cache
 __pycache__/
+*.pyc
+
+debug_captures_pipeline/
+debug_captures/
+debug_captures_grid/
+debug_captures_pipeline/
