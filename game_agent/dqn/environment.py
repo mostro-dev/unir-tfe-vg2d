@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 from datetime import datetime
 
+import openai
+
 from config import DIRECTIONS, DIRECTIONS_TUPLE, GAME_REGION, OBSTACLE_THRESHOLD, PLAYER_POSITION, TILE_HEIGHT, TILE_WIDTH, TileType
 from game_agent.map.world_map import WorldMap
 from game_agent.controller.keyboard_controller import move, press
@@ -353,34 +355,151 @@ class GameEnvironment:
             return "WALL"
 
     def get_state(self):
-        # 1) los 4 obstáculos originales
+        """
+        Estado = [4 obstáculos inmediatos] +
+                 [5 entradas por vecino * 4 vecinos] +
+                 [ventana local H×W aplanada con 5 canales]
+        donde H = número de filas de tiles visibles (9),
+              W = número de columnas de tiles visibles (10).
+        """
+        # 1) Captura y partición en tiles procesados
         proc = self.capture_and_process()
         tiles = split_into_tiles(proc, self.tile_height, self.tile_width)
-        obs = get_surrounding_obstacles(tiles)
+
+        # 2) Obstáculos inmediatos
+        obs = get_surrounding_obstacles(tiles, player_pos=PLAYER_POSITION)
         basic = np.array([float(obs[d]) for d in DIRECTIONS_TUPLE],
                          dtype=np.float32)
 
-        # 2) ahora extraigo del mapa local las probabilidades para cada vecino
+        # 3) Características de los 4 vecinos
         extras = []
-        for direction in DIRECTIONS_TUPLE:
-            coord = self._future_coord(direction)
+        for d in DIRECTIONS_TUPLE:
+            coord = self._future_coord(d)
             entry = self.world_map.map.get(coord, {})
-            # ejemplo: FLOOR, INFO, DOOR, WALL, _visits
-            extras.append(entry.get(TileType.FLOOR.value, 0.0))
-            extras.append(entry.get(TileType.INFO.value,  0.0))
-            extras.append(entry.get(TileType.DOOR.value,  0.0))
-            extras.append(entry.get(TileType.WALL.value,  0.0))
-            # podrías normalizar _visits si te interesa:
-            extras.append(entry.get("_visits", 0) / 10.0)
+            extras.extend([
+                entry.get(TileType.FLOOR.value, 0.0),
+                entry.get(TileType.INFO.value,  0.0),
+                entry.get(TileType.DOOR.value,  0.0),
+                entry.get(TileType.WALL.value,  0.0),
+                entry.get("_visits", 0) / 10.0,
+            ])
 
-        return np.concatenate([basic, np.array(extras, dtype=np.float32)])
+        # 4) Dimensiones dinámicas de la ventana
+        H = len(tiles)       # p.ej. 9 filas
+        W = len(tiles[0])    # p.ej. 10 columnas
+        half_h = H // 2
+        half_w = W // 2
 
-    def step(self, action: str, debug: bool = True):
+        # Construimos desplazamientos para cubrir exactamente W×H
+        dys = [i - half_h for i in range(H)]
+        dxs = [j - half_w for j in range(W)]
+
+        # 5) Creamos el tensor ventana (H, W, 5)
+        window = np.zeros((H, W, 5), dtype=np.float32)
+        cx, cy = self.agent_pos
+        for i, dy in enumerate(dys):
+            for j, dx in enumerate(dxs):
+                x, y = cx + dx, cy + dy
+                entry = self.world_map.map.get((x, y), {})
+                window[i, j, 0] = entry.get(TileType.FLOOR.value, 0.0)
+                window[i, j, 1] = entry.get(TileType.INFO.value,  0.0)
+                window[i, j, 2] = entry.get(TileType.DOOR.value,  0.0)
+                window[i, j, 3] = entry.get(TileType.WALL.value,  0.0)
+                window[i, j, 4] = entry.get("_visits", 0) / 10.0
+
+        flat_win = window.ravel()
+
+        # 6) Concatenamos todo en el vector de estado
+        return np.concatenate([
+            basic,                        # 4
+            np.array(extras, dtype=np.float32),  # 20
+            flat_win                      # H*W*5 = 9*10*5 = 450
+        ])
+
+    def find_path(self, start: tuple[int, int], goal: tuple[int, int]) -> list[tuple[int, int]] | None:
         """
-        Ejecuta la acción, calcula recompensa, actualiza posición lógica
-        AL FINAL, y registra el tile en world_map (con penalización por revisitas).
+        Busca un camino por BFS desde start hasta goal sobre world_map,
+        evitando casillas mapeadas como WALL.
+        Devuelve la lista de coordenadas (incluyendo start y goal), o None si no hay ruta.
+        """
+        if start == goal:
+            return [start]
+
+        # Vecinos en orden (para BFS uniforme)
+        directions = {'up': (0, -1), 'right': (1, 0),
+                      'down': (0, 1), 'left': (-1, 0)}
+        visited = set([start])
+        queue = deque([[start]])
+
+        while queue:
+            path = queue.popleft()
+            x, y = path[-1]
+            for dx, dy in directions.values():
+                nx, ny = x+dx, y+dy
+                coord = (nx, ny)
+                if coord in visited:
+                    continue
+                entry = self.world_map.map.get(coord, {})
+                # Saltamos si sabemos que es pared
+                if entry.get(TileType.WALL.value, 0) >= 1:
+                    continue
+                visited.add(coord)
+                new_path = path + [coord]
+                if coord == goal:
+                    return new_path
+                queue.append(new_path)
+        return None
+
+    def path_to_actions(self, path: list[tuple[int, int]]) -> list[str]:
+        """
+        Convierte una ruta de coordenadas [(x0,y0),(x1,y1),…] en
+        una lista de acciones ['up','right',…].
+        """
+        actions = []
+        for (x0, y0), (x1, y1) in zip(path, path[1:]):
+            dx, dy = x1-x0, y1-y0
+            if dx == 1 and dy == 0:
+                actions.append('right')
+            elif dx == -1 and dy == 0:
+                actions.append('left')
+            elif dx == 0 and dy == 1:
+                actions.append('down')
+            elif dx == 0 and dy == -1:
+                actions.append('up')
+            else:
+                raise ValueError(
+                    f"Movimiento no cardinal: {(x0,y0)} → {(x1,y1)}")
+        return actions
+
+    def step(self, action: str | tuple[int, int], debug: bool = True):
+        """
+        Ejecuta la acción (o planifica si le pasas una tupla destino), calcula recompensa,
+        actualiza posición lógica AL FINAL, y registra el tile en world_map (con penalización por revisitas).
         Detección de movimiento combinando diff global y diff local de parches.
         """
+        # --- Planificación de objetivo alto ---
+        if isinstance(action, tuple):
+            goal = action
+            if debug:
+                print(f"\n[DEBUG] Orden de planificación: ir a {goal}")
+            path = self.find_path(self.agent_pos, goal)
+            if path is None:
+                if debug:
+                    print(
+                        f"[DEBUG] No se encontró ruta a {goal}, quedo en {self.agent_pos}")
+                return self.get_state(), 0.0, False
+            action_seq = self.path_to_actions(path)
+            total_reward = 0.0
+            for a in action_seq:
+                # aquí recursivamente llamamos a step con strings
+                _, r, _ = self.step(a, debug)
+                total_reward += r
+            if debug:
+                print(
+                    f"[DEBUG] Plan completado, recompensa total acumulada: {total_reward:.2f}")
+            return self.get_state(), total_reward, False
+
+        # Si llegamos aquí, action es un string atómico
         was_inside_building = False
         # --- 0) Debug inicial ---
         if debug:
@@ -412,8 +531,9 @@ class GameEnvironment:
             press('z')
 
         time.sleep(1.5)
-        print(
-            f"\n[DEBUG] Acción ejecutada: {action} desde la casilla={self.agent_pos}")
+        if debug:
+            print(
+                f"[DEBUG] Acción ejecutada: {action} desde la casilla={self.agent_pos}")
 
         # --- 4) Captura tras la acción ---
         new_img = self.capture_and_process()
@@ -428,14 +548,9 @@ class GameEnvironment:
 
         # --- 5.2) Gate: si next_coord ya es muro, fuerza no movimiento ---
         entry = self.world_map.map.get(next_coord, {})
-        # Accedemos al count de 'WALL' dentro de '_counts'
         wall_count = entry.get('_counts', {}).get('WALL', 0)
-
-        # Obtenemos el valor de 'WALL' directamente del diccionario principal
         wall_value = entry.get('WALL', 0.0)
-
         if wall_count >= 5 and wall_value >= 1:
-            # if entry.get(TileType.WALL.value, 0.0) >= 1.0:
             moved = False
             if debug:
                 print(
@@ -458,16 +573,12 @@ class GameEnvironment:
         if action in DIRECTIONS:
             if moved:
                 x, y = next_coord
-                # clamp para no-negativos
-                if x < 0 or y < 0:
-                    moved = False
+                if x < -50 or y < -50:
+                    # moved = False
                     if debug:
                         print(
                             f"[DEBUG] next_coord {next_coord} fuera de límites → moved=False")
-                    # raise ValueError(
-                    #     f"next_coord {next_coord} fuera de límites: x={x}, y={y}")
                 else:
-                    # 7.1) Si se movió, chequeamos si es Edificio
                     if building_check:
                         if debug:
                             print(
@@ -498,9 +609,6 @@ class GameEnvironment:
                                 print(
                                     f"[DEBUG] No salió del edificio. Penalización: {self.REWARDS['oak_zone_penalty']} - agent_pos={self.agent_pos}"
                                 )
-
-                    # Si no es edificio...
-                    # si se movió, chequeamos si es revisita
                     if self.recent_tiles.__contains__(next_coord) and self.punish_revisit:
                         reward += self.REWARDS["move_revisit"]
                         if debug:
@@ -513,41 +621,35 @@ class GameEnvironment:
                             print(
                                 f"[DEBUG] Movido con éxito a {next_coord}. Recompensa: {self.REWARDS['move_success']}"
                             )
-                        # marcamos provisionalmente como FLOOR
                         self.world_map.update_tile(next_coord, TileType.FLOOR)
-
                     if not was_inside_building:
-                        # finalmente actualizamos posición lógica
                         self.agent_pos = next_coord
 
                         if debug:
                             print(
-                                f"\n[DEBUG] agent_pos actualizado a {self.agent_pos}")
+                                f"[DEBUG] agent_pos actualizado a {self.agent_pos}")
                         self.world_map.mark_visited(self.agent_pos)
                         if self.save_mode:
                             self.world_map.save()
-
-                was_inside_building = False  # reset para el siguiente paso
+                was_inside_building = False
                 self.recent_tiles.append(self.agent_pos)
             else:
                 # sin movimiento: chequeo obstáculo real
                 real_obstacle = self.is_real_obstacle(
                     action, old_image=prev_img, debug=debug)
-
-                print(f"[DEBUG] is_real_obstacle → {real_obstacle}")
-
+                if debug:
+                    print(f"[DEBUG] is_real_obstacle → {real_obstacle}")
                 match real_obstacle:
                     case "FLOOR":
                         reward += self.REWARDS["move_success"]
-                        # finalmente actualizamos posición lógica
                         self.agent_pos = next_coord
                         self.recent_tiles.append(self.agent_pos)
                         self.world_map.update_tile(next_coord, TileType.FLOOR)
                         if self.save_mode:
                             self.world_map.save()
-                        print(
-                            f"[DEBUG] Sin obstaculo en {action}. Valida movimiento. Recompensa: {self.REWARDS['move_wall']}"
-                        )
+                        if debug:
+                            print(
+                                f"[DEBUG] Sin obstaculo en {action}. Valida movimiento. Recompensa: {self.REWARDS['move_wall']}")
                     case "INFO":
                         self.world_map.update_tile(next_coord, TileType.INFO)
                         self.save_tile_sample(
@@ -561,8 +663,7 @@ class GameEnvironment:
                             self.world_map.save()
                         if debug:
                             print(
-                                f"[DEBUG] Choque pared con {action}. Recompensa: {self.REWARDS['move_wall']}"
-                            )
+                                f"[DEBUG] Choque pared con {action}. Recompensa: {self.REWARDS['move_wall']}")
 
         # --- 8) Interacción con 'z' (sin cambios) ---
         else:
@@ -586,7 +687,6 @@ class GameEnvironment:
                     )
                 if self.save_mode:
                     self.world_map.save()
-                # Mantener pulsando Z hasta cerrar diálogo
                 while True:
                     press('z')
                     time.sleep(0.5)
@@ -598,11 +698,76 @@ class GameEnvironment:
             elif not dialog and self.is_text_in_screen:
                 self.is_text_in_screen = False
 
-        # time.sleep(3)
-
         # --- 10) Retorno ---
         if debug:
             print(f"\n[DEBUG] Posición final del agente: {self.agent_pos}")
             print(f"[DEBUG] Paso completo – reward acumulada: {reward:.2f}\n")
             print(f"\n\n////// -- Fin Step -- //////\n\n")
         return self.get_state(), reward, False
+
+# NL Methods
+    # def _parse_nl(self, instruction: str) -> tuple[int, int]:
+    #     """
+    #     Llama al LLM para extraer la coordenada objetivo (x,y)
+    #     o bien una etiqueta (“casa”, “árbol”, etc.).
+    #     Devuelve la casilla de destino en coords lógicas.
+    #     """
+    #     openai.api_key = OPENAI_API_KEY
+    #     prompt = f"""
+    #     El agente dispone de un mapa cuadriculado donde cada tile tiene coordenadas (x,y) con origen en (0,0).
+    #     Le pido que convierta esta orden en un objetivo (x,y):
+    #     "{instruction}"
+    #     Devuélveme solo dos enteros separados por coma, p.ej. "4,7".
+    #     Si no entiende o no hay objetivo, devuelve "UNKNOWN".
+    #     """
+    #     resp = openai.ChatCompletion.create(
+    #         model="gpt-4o-mini",
+    #         messages=[{"role": "system", "content": "You are a coordinate parser."},
+    #                   {"role": "user", "content": prompt}],
+    #         temperature=0.0,
+    #     )
+    #     text = resp.choices[0].message.content.strip()
+    #     try:
+    #         x_str, y_str = text.split(",")
+    #         return int(x_str), int(y_str)
+    #     except:
+    #         raise ValueError(f"No pude parsear coordenadas de: {text!r}")
+
+    # def execute_nl(self, instruction: str, debug: bool = True):
+    #     """
+    #     Toma un comando en NL, lo parsea a un destino, planea ruta y lo ejecuta.
+    #     """
+    #     if debug:
+    #         print(f"[DEBUG] Interpretando instrucción: {instruction!r}")
+    #     # 1) parsear objetivo
+    #     try:
+    #         goal = self._parse_nl(instruction)
+    #     except ValueError as e:
+    #         if debug:
+    #             print(f"[DEBUG] Parser falló: {e}")
+    #         return
+
+    #     if debug:
+    #         print(f"[DEBUG] Objetivo parseado: {goal}")
+
+    #     # 2) buscar ruta en el mapa conocido
+    #     path = self.find_path(self.agent_pos, goal)
+    #     if path is None:
+    #         if debug:
+    #             print("[DEBUG] No hay ruta conocida hasta", goal)
+    #         return
+
+    #     actions = self.path_to_actions(path)
+    #     if debug:
+    #         print(f"[DEBUG] Ruta encontrada ({len(path)} pasos): {path}")
+    #         print(f"[DEBUG] Acciones a ejecutar: {actions}")
+
+    #     # 3) ejecutar cada paso con step()
+    #     for a in actions:
+    #         state, reward, done = self.step(a, debug=debug)
+    #         if done:
+    #             break
+
+    #     if debug:
+    #         print(
+    #             f"[DEBUG] Llegamos a {self.agent_pos}, recompensa acumulada final: {reward:.2f}")
